@@ -1,12 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createHmac } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import { createServer } from 'node:http';
-import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
+import { chmod, link, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createStripeWebhookRoute, retrieveStripeLineItems } from '../api/stripe-webhook.mjs';
 import { validateOfferCatalog, verifyPaidCheckout } from '../api/stripe-verifier.mjs';
+import { PurchaseLedger } from '../api/purchase-ledger.mjs';
 
 const SECRET = 'whsec_offline_fixture_only_not_live';
 const NOW = 1780000000;
@@ -174,4 +175,55 @@ test('normal unexpanded Stripe webhook retrieves trusted line items before durab
 
   await assert.rejects(() => retrieveStripeLineItems('not-a-session-id', stripeApiKey, stripeFetch), /invalid checkout/);
   await assert.rejects(() => retrieveStripeLineItems('cs_test_validid', '', stripeFetch), /key is not configured/);
+});
+
+test('private purchase ledger rejects public, symlinked and indirect symlinked directories before writes', {
+  skip: process.platform === 'win32' ? 'POSIX permissions and symlink guarantees' : false
+}, async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'site-ledger-path-integrity-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const { raw, header } = signed(event());
+  const purchase = verifyPaidCheckout(raw, header, SECRET, [OFFER], NOW);
+  const publicDir = join(root, 'public');
+  const privateDir = join(root, 'private');
+  await mkdir(publicDir, { mode: 0o700 });
+  await chmod(publicDir, 0o777);
+  await assert.rejects(() => new PurchaseLedger(publicDir).record(purchase), /private and process-owned/);
+  assert.deepEqual(await readdir(publicDir), [], 'no sale must be written to shared storage');
+  await mkdir(privateDir, { mode: 0o700 });
+  const alias = join(root, 'alias');
+  await symlink(privateDir, alias, 'dir');
+  await assert.rejects(() => new PurchaseLedger(alias).record(purchase), /symlinks/);
+  await assert.rejects(() => new PurchaseLedger(join(alias, 'child')).record(purchase), /symlinks/);
+  await assert.rejects(() => stat(join(privateDir, 'child')), { code: 'ENOENT' });
+  assert.deepEqual(await readdir(privateDir), [], 'no side effects across an untrusted path');
+});
+
+test('replayed paid events reject symlink and hardlinked ledger files without leaking contents', {
+  skip: process.platform === 'win32' ? 'POSIX symlink and hardlink semantics' : false
+}, async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'site-ledger-replay-integrity-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const ledgerDir = join(root, 'ledger');
+  await mkdir(ledgerDir, { mode: 0o700 });
+  const packet = signed(event());
+  const purchase = verifyPaidCheckout(packet.raw, packet.header, SECRET, [OFFER], NOW);
+  const ledger = new PurchaseLedger(ledgerDir);
+  const key = createHash('sha256').update(purchase.eventId).digest('hex');
+  const target = join(root, 'outside-private-ledger.json');
+  const destination = join(ledgerDir, key + '.json');
+  await writeFile(target, 'PRIVATE-UNTRUSTED-CONTENT', { mode: 0o600 });
+  await symlink(target, destination);
+  await assert.rejects(() => ledger.record(purchase), (error) =>
+    /unsafe or unreadable/.test(error.message) && !error.message.includes('PRIVATE-UNTRUSTED-CONTENT'));
+  await unlink(destination);
+  await link(target, destination);
+  await assert.rejects(() => ledger.record(purchase), /unsafe or unreadable/);
+  await unlink(destination);
+  const first = await ledger.record(purchase);
+  const replay = await ledger.record(purchase);
+  assert.equal(first.recorded, true);
+  assert.equal(replay.duplicate, true);
+  assert.deepEqual((await readdir(ledgerDir)).filter(name => name.endsWith('.json')),
+                   [key + '.json'], 'accepted purchase has one durable private record');
 });
