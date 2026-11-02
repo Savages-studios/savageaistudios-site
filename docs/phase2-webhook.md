@@ -15,6 +15,7 @@ Set these environment variables in a server-side runtime:
 - `STRIPE_WEBHOOK_SECRET`: endpoint secret for the particular Stripe account/mode, never committed or exposed to the browser.
 - `STRIPE_API_READ_KEY`: a server-only account-scoped Stripe read key (a restricted key with Checkout line-item read permissions where supported), paired to the same account/mode; the webhook now makes a GET request to Stripe for normal unexpanded events.
 - `SAVAGE_PURCHASE_LEDGER_DIR`: absolute private persistent path with filesystem atomic hardlink and fsync support; **not ephemeral container storage**.
+  The configured path and every existing ancestor component must not be a symlink. The ledger directory itself must be owned by the webhook process and inaccessible to group/other users on POSIX (mode 0700). Existing replay files are read through a verified descriptor without following symlinks, and must be single-link, private, process-owned regular files under the size cap. Invalid directories and replay files cause the webhook to fail closed rather than acknowledge an unsafe or uncommitted sale. On Windows, ACL enforcement remains the operator's responsibility and must be verified before deployment. A trusted parent directory and a single-writer deployment remain necessary; filesystem checks do not defend against a privileged same-UID or administrator racing the path after validation.
 - `SAVAGE_STRIPE_PRODUCTS_JSON`: JSON array of offers, each with `accountId`, `livemode`, `paymentLinkId`, `priceId`, `sku`, `amountTotal`, `currency`, `fulfillmentMode: "manual"`.
 - `PORT` and optional `HOST`: HTTPS reverse proxy must send unmodified raw body and `Stripe-Signature` to this service.
 
@@ -30,6 +31,6 @@ From the repository root, with Node 22 or newer:
 npm test
 ```
 
-The `tests/stripe-webhook.test.mjs` test signs synthetic offline events, sends actual HTTP requests, verifies durable sale + work rows on disk, checks replay and mismatch rejections, and uses no Stripe network calls or money.
+The `tests/stripe-webhook.test.mjs` includes native filesystem tamper regressions for permissive directories, symlinked ledger paths, malicious replay symlinks and hardlinks; it also signs synthetic offline events, sends actual HTTP requests, verifies durable sale + work rows on disk, checks replay and mismatch rejections, and uses no Stripe network calls or money.
 
-Production acceptance requires: CI green on the exact branch SHA; signed Stripe test-mode end-to-end checkout and receipt; all actual product IDs mapped; private persistent storage and backup/recovery proof; worker fulfillment and refunds/chargebacks; and separately authorized deployment. A green unit test does not waive these requirements.
+Production acceptance requires: Linux **and native Windows** CI on the exact branch SHA with job logs and no skipped required gates; a real deployment preflight proving directory ownership, POSIX permissions or Windows ACLs, stable private storage and filesystem fsync behavior; signed Stripe test-mode end-to-end checkout and receipt; all actual product IDs mapped; private persistent storage and backup/recovery proof; worker fulfillment and refunds/chargebacks; and separately authorized deployment. A green unit test does not waive these requirements.
