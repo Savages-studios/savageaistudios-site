@@ -130,7 +130,7 @@ export async function provisionPendingFacturForgeSales(env = process.env) {
   const markers = await privateDirectory(env.SAVAGE_FULFILLMENT_RECEIPT_DIR);
   const grantDirectory = await privateDirectory(env.FACTURFORGE_PREPAID_DIR);
   const deliveryDirectory = await privateDirectory(env.FACTURFORGE_PRIVATE_DELIVERY_DIR);
-  if (new Set([ledger, markers, grantDirectory, deliveryDirectory].map(resolve)).size !== 4)
+  if (new Set([ledger, markers, grantDirectory, deliveryDirectory].map((path) => resolve(path))).size !== 4)
     fail('storage_roots_must_be_distinct');
   const cli = env.FACTURFORGE_PROVISION_CLI;
   if (typeof cli !== 'string' || !isAbsolute(cli) || !cli.endsWith('.js'))
