@@ -1,6 +1,6 @@
-# Phase 2 purchase webhook (branch-only, not deployed)
+# Phase 2 purchase webhook (source merged previously; live deployment unverified)
 
-The existing site is static HTML, and **static hosts cannot execute Node webhook code**. This PR adds a Node 22+ webhook service entry point and a durable, fail-closed pending-fulfillment queue. No production endpoint exists until a separate deployment and routing change is authorized.
+The existing site is static HTML, and **static hosts cannot execute Node webhook code**. The earlier PR #4 added a Node 22+ webhook service entry point and a durable, fail-closed pending-fulfillment queue on main. This document is a source/runbook, not proof that the endpoint is deployed. No production endpoint exists until a separate deployment and routing change is authorized.
 
 ## Current behavior
 
