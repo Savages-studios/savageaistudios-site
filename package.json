@@ -3,6 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22" },
-  "scripts": { "test": "node --test tests/*.test.mjs", "start:webhook": "node server.mjs" }
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "start:webhook": "node server.mjs",
+    "fulfill:facturforge": "node scripts/provision-facturforge-purchases.mjs"
+  }
 }
