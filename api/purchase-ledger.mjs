@@ -10,14 +10,26 @@ import { isAbsolute, join, parse, sep } from 'node:path';
  * directories before creating or reading a purchase.
  */
 async function assertPrivateLedgerPath(directory) {
-  await mkdir(directory, { recursive: true, mode: 0o700 });
   const root = parse(directory).root;
-  let cursor = root;
-  for (const component of directory.slice(root.length).split(sep).filter(Boolean)) {
-    cursor = join(cursor, component);
-    const part = await lstat(cursor);
-    if (part.isSymbolicLink()) throw new Error('purchase ledger path must not contain symlinks');
-  }
+  const components = directory.slice(root.length).split(sep).filter(Boolean);
+  const checkPath = async (allowMissing) => {
+    let cursor = root;
+    for (const component of components) {
+      cursor = join(cursor, component);
+      let part;
+      try { part = await lstat(cursor); }
+      catch (error) {
+        if (allowMissing && error.code === 'ENOENT') return;
+        throw error;
+      }
+      if (part.isSymbolicLink()) throw new Error('purchase ledger path must not contain symlinks');
+    }
+  };
+  // Check BEFORE mkdir: recursive creation would otherwise traverse an
+  // attacker-selected symlink and create private files in the wrong tree.
+  await checkPath(true);
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  await checkPath(false);
   const state = await lstat(directory);
   if (!state.isDirectory()) throw new Error('purchase ledger path must be a directory');
   if (process.platform !== 'win32' &&
