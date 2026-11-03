@@ -12,7 +12,7 @@ import { constants } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { lstat, open, readdir, realpath } from 'node:fs/promises';
-import { isAbsolute, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { validateOfferCatalog } from '../api/stripe-verifier.mjs';
 
@@ -29,8 +29,20 @@ export async function privateDirectory(path) {
   if (typeof path !== 'string' || !isAbsolute(path)) fail('absolute_private_directory_required');
   const stat = await lstat(path);
   if (!stat.isDirectory() || stat.isSymbolicLink()
-      || (process.platform !== 'win32' && (stat.mode & 0o077) !== 0)
-      || await realpath(path) !== resolve(path)) fail('private_directory_invalid');
+      || (process.platform !== 'win32' && (stat.mode & 0o077) !== 0))
+    fail('private_directory_invalid');
+  if (process.platform === 'win32') {
+    // Windows 8.3 short names and long names can refer to the same directory.
+    // Comparing realpath() to resolve() falsely rejects safe private roots.
+    // Instead refuse symlinks/junctions in EVERY path component, including
+    // ancestors, without treating 8.3 canonicalization as a symlink.
+    for (let cursor = resolve(path); ; cursor = dirname(cursor)) {
+      if ((await lstat(cursor)).isSymbolicLink()) fail('private_directory_invalid');
+      if (dirname(cursor) === cursor) break;
+    }
+  } else if (await realpath(path) !== resolve(path)) {
+    fail('private_directory_invalid');
+  }
   return path;
 }
 
