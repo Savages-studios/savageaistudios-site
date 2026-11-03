@@ -1,0 +1,31 @@
+name: Commercial fulfillment reconciliation (review-only)
+on:
+  push:
+    branches:
+      - gpt/commercial-fulfillment-reconciliation-20261102
+permissions:
+  contents: read
+jobs:
+  source-and-reconciliation:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run actual site suite with raw logs
+        shell: bash
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee commerce-reconciliation-tests.log
+      - name: Preserve raw evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: commerce-reconciliation-${{ matrix.os }}
+          path: commerce-reconciliation-tests.log
+          if-no-files-found: error
