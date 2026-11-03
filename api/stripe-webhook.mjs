@@ -1,4 +1,4 @@
-import { verifyPaidCheckout, verifySignedCheckoutEnvelope, validateOfferCatalog } from './stripe-verifier.mjs';
+import { verifyPaidCheckout, verifySignedCheckoutEnvelope, verifySignedEventEnvelope, validateOfferCatalog, FULFILLMENT_EVENT_TYPES } from './stripe-verifier.mjs';
 import { PurchaseLedger } from './purchase-ledger.mjs';
 
 async function readRaw(req, max = 256 * 1024) {
@@ -58,6 +58,22 @@ export function createStripeWebhookRoute({ signingSecret, stripeApiKey, offers, 
     let raw;
     try { raw = await readRaw(req); }
     catch (error) { respond(res, error.code === 'BODY_TOO_LARGE' ? 413 : 500, { error: error.code ?? 'BODY_READ_FAILED' }); return true; }
+    let signedEvent;
+    try {
+      signedEvent = verifySignedEventEnvelope(raw, req.headers['stripe-signature'],
+                                              signingSecret, nowSeconds?.());
+    } catch (error) {
+      respond(res, 400, { received: false, error: 'CHECKOUT_REJECTED', reason: error.message });
+      return true;
+    }
+    if (!FULFILLMENT_EVENT_TYPES.has(signedEvent.event.type)) {
+      // Authentic Stripe event that cannot claim a fulfillment (expiry,
+      // refund and payment-intent notices): acknowledge it so Stripe stops
+      // retrying, and record nothing. Only the two fulfillment event types
+      // proceed to checkout verification below.
+      respond(res, 200, { received: true, recorded: false, duplicate: false, ignored: true });
+      return true;
+    }
     let envelope;
     try {
       envelope = verifySignedCheckoutEnvelope(raw, req.headers['stripe-signature'],

@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createStripeWebhookRoute, retrieveStripeLineItems } from '../api/stripe-webhook.mjs';
 import { validateOfferCatalog, verifyPaidCheckout } from '../api/stripe-verifier.mjs';
-import { PurchaseLedger } from '../api/purchase-ledger.mjs';
+import { PurchaseLedger, checkoutSessionClaimKey } from '../api/purchase-ledger.mjs';
 
 const SECRET = 'whsec_offline_fixture_only_not_live';
 const NOW = 1780000000;
@@ -226,4 +226,206 @@ test('replayed paid events reject symlink and hardlinked ledger files without le
   assert.equal(replay.duplicate, true);
   assert.deepEqual((await readdir(ledgerDir)).filter(name => name.endsWith('.json')),
                    [key + '.json'], 'accepted purchase has one durable private record');
+});
+
+// --- Issue #9: fulfillment idempotency is keyed by checkout session. ---
+
+const purchaseFor = (eventId, sessionOverrides = {}) => {
+  const packet = signed(event(sessionOverrides, { id: eventId }));
+  return verifyPaidCheckout(packet.raw, packet.header, SECRET, [OFFER], NOW);
+};
+const claimPathFor = (directory, sessionId = 'cs_test_offline_site_event', livemode = false) =>
+  join(directory, createHash('sha256').update(checkoutSessionClaimKey(livemode, sessionId)).digest('hex') + '.claim');
+const plantClaim = async (directory, overrides = {}) => {
+  const now = Date.now();
+  const claim = {
+    schemaVersion: 2, kind: 'checkout-session-claim',
+    claimKey: checkoutSessionClaimKey(false, 'cs_test_offline_site_event'),
+    sessionId: 'cs_test_offline_site_event', livemode: false,
+    state: 'pending', leaseId: '0123456789abcdef0123456789abcdef',
+    claimedAt: new Date(now).toISOString(), claimedAtMs: now,
+    eventId: 'evt_claim_owner', recordFile: null, paymentIntentId: null,
+    ...overrides
+  };
+  const path = claimPathFor(directory, claim.sessionId, claim.livemode);
+  await writeFile(path, JSON.stringify(claim) + '\n', { mode: 0o600 });
+  return { path, claim };
+};
+const recordFiles = async (directory) =>
+  (await readdir(directory)).filter((name) => name.endsWith('.json'));
+
+test('two distinct events for one checkout session produce exactly one fulfillment record', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'savage-session-idempotency-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const ledger = new PurchaseLedger(directory);
+  const first = await ledger.record(purchaseFor('evt_111'));
+  const second = await ledger.record(purchaseFor('evt_222'));
+  assert.equal(first.recorded, true);
+  assert.equal(second.recorded, false);
+  assert.equal(second.duplicate, true);
+  assert.equal(second.row.eventId, 'evt_111', 'the first verified event owns the fulfillment');
+  const records = await recordFiles(directory);
+  assert.equal(records.length, 1, 'exactly one durable fulfillment record for the session');
+  const claim = JSON.parse(await readFile(claimPathFor(directory), 'utf8'));
+  assert.equal(claim.state, 'fulfilled');
+  assert.equal(claim.recordFile, records[0]);
+  const burst = await Promise.all(['evt_333', 'evt_444', 'evt_555'].map((id) => ledger.record(purchaseFor(id))));
+  assert.ok(burst.every((outcome) => outcome.duplicate && !outcome.recorded));
+  assert.equal((await recordFiles(directory)).length, 1, 'a burst of distinct events still yields one record');
+});
+
+test('two different checkout sessions produce two fulfillment records', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'savage-session-distinct-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const ledger = new PurchaseLedger(directory);
+  const a = await ledger.record(purchaseFor('evt_session_a', { id: 'cs_test_session_a' }));
+  const b = await ledger.record(purchaseFor('evt_session_b', { id: 'cs_test_session_b' }));
+  assert.equal(a.recorded, true);
+  assert.equal(b.recorded, true);
+  assert.equal((await recordFiles(directory)).length, 2);
+});
+
+test('missing or malformed checkout session fails closed without claiming', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'savage-session-missing-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const ledger = new PurchaseLedger(directory);
+  const base = {
+    eventId: 'evt_no_session', customerEmail: 'buyer@example.invalid', sku: OFFER.sku,
+    amountTotal: OFFER.amountTotal, currency: 'usd', accountId: OFFER.accountId, livemode: false,
+    observedAt: new Date(NOW * 1000).toISOString(), fulfillmentMode: 'manual'
+  };
+  await assert.rejects(() => ledger.record({ ...base }), /invalid checkout session ID/);
+  await assert.rejects(() => ledger.record({ ...base, sessionId: 'not-a-session' }), /invalid checkout session ID/);
+  await assert.rejects(() => ledger.record({ ...base, sessionId: 'cs_live_wrong_mode' }), /invalid checkout session ID/);
+  await assert.rejects(() => ledger.record({ ...base, paymentIntentId: 'pi_unresolvable' }), /unresolvable payment intent/);
+  assert.deepEqual(await readdir(directory), [], 'fail-closed attempts write no record and no claim');
+});
+
+test('stale pending session claim is recovered by a later event exactly once', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'savage-claim-stale-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const staleAt = Date.now() - 120_000;
+  const { path } = await plantClaim(directory, {
+    claimedAtMs: staleAt, claimedAt: new Date(staleAt).toISOString(), eventId: 'evt_crashed_owner'
+  });
+  const ledger = new PurchaseLedger(directory);
+  const recovered = await ledger.record(purchaseFor('evt_recovery'));
+  assert.equal(recovered.recorded, true, 'a crashed pending claim must not permanently block fulfillment');
+  const after = await ledger.record(purchaseFor('evt_after_recovery'));
+  assert.equal(after.duplicate, true);
+  const records = await recordFiles(directory);
+  assert.equal(records.length, 1, 'recovery fulfills the session exactly once');
+  const claim = JSON.parse(await readFile(path, 'utf8'));
+  assert.equal(claim.state, 'fulfilled');
+  assert.equal(claim.eventId, 'evt_recovery');
+  assert.equal(claim.recordFile, records[0]);
+});
+
+test('fresh pending session claim blocks a second event without double fulfillment', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'savage-claim-fresh-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await plantClaim(directory, { eventId: 'evt_in_flight' });
+  const ledger = new PurchaseLedger(directory);
+  const blocked = await ledger.record(purchaseFor('evt_blocked'));
+  assert.equal(blocked.recorded, false);
+  assert.equal(blocked.duplicate, true);
+  assert.equal(blocked.inProgress, true, 'a fresh claim reads as duplicate-in-progress');
+  assert.equal((await recordFiles(directory)).length, 0, 'no fulfillment record may be written behind a fresh claim');
+});
+
+test('legacy event-keyed record reconciles the session without duplicate fulfillment', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'savage-claim-legacy-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  // A record exactly as the pre-fix ledger wrote it: keyed by its own event
+  // ID, binding over the purchase identity in the original field order.
+  const legacyPurchase = purchaseFor('evt_legacy');
+  const legacyIdentity = {
+    eventId: legacyPurchase.eventId, sessionId: legacyPurchase.sessionId,
+    customerEmail: legacyPurchase.customerEmail, sku: legacyPurchase.sku,
+    amountTotal: legacyPurchase.amountTotal, currency: legacyPurchase.currency,
+    accountId: legacyPurchase.accountId, livemode: legacyPurchase.livemode,
+    fulfillmentMode: legacyPurchase.fulfillmentMode
+  };
+  const legacyRow = {
+    schemaVersion: 1, eventId: 'evt_legacy',
+    purchaseBinding: createHash('sha256').update(JSON.stringify(legacyIdentity)).digest('hex'),
+    sale: {
+      checkoutSessionId: 'cs_test_offline_site_event', buyerEmail: 'buyer@example.invalid',
+      sku: OFFER.sku, amountTotal: 1900, currency: 'usd', accountId: OFFER.accountId,
+      livemode: false, providerEventId: 'evt_legacy', purchasedAt: legacyPurchase.observedAt
+    },
+    fulfillment: { sku: OFFER.sku, status: 'pending', method: 'manual', sourceEventId: 'evt_legacy' }
+  };
+  const legacyFile = createHash('sha256').update('evt_legacy').digest('hex') + '.json';
+  await writeFile(join(directory, legacyFile), JSON.stringify(legacyRow) + '\n', { mode: 0o600 });
+  const ledger = new PurchaseLedger(directory);
+  const outcome = await ledger.record(purchaseFor('evt_new_for_same_session'));
+  assert.equal(outcome.recorded, false);
+  assert.equal(outcome.duplicate, true);
+  assert.equal(outcome.row.eventId, 'evt_legacy');
+  assert.deepEqual(await recordFiles(directory), [legacyFile], 'no second fulfillment record is created');
+  const claim = JSON.parse(await readFile(claimPathFor(directory), 'utf8'));
+  assert.equal(claim.state, 'fulfilled');
+  assert.equal(claim.recordFile, legacyFile);
+  const replay = await ledger.record(legacyPurchase);
+  assert.equal(replay.duplicate, true, 'the legacy event itself still verifies against its original binding');
+});
+
+test('payment-intent-only delivery resolves the stored session link and cannot double-fulfill', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'savage-pi-link-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const ledger = new PurchaseLedger(directory);
+  const withPi = purchaseFor('evt_with_pi', { payment_intent: 'pi_offline_link' });
+  assert.equal(withPi.paymentIntentId, 'pi_offline_link');
+  assert.equal((await ledger.record(withPi)).recorded, true);
+  const piOnly = { ...withPi, eventId: 'evt_pi_only', sessionId: undefined };
+  const resolved = await ledger.record(piOnly);
+  assert.equal(resolved.duplicate, true);
+  assert.equal(resolved.row.sale.checkoutSessionId, 'cs_test_offline_site_event');
+  assert.equal((await recordFiles(directory)).length, 1);
+  await assert.rejects(
+    () => ledger.record({ ...withPi, eventId: 'evt_pi_unknown', sessionId: undefined, paymentIntentId: 'pi_unknown_link' }),
+    /unresolvable payment intent/);
+  // A second session storing the same payment intent poisons the link.
+  const other = purchaseFor('evt_other_session', { id: 'cs_test_other_session', payment_intent: 'pi_offline_link' });
+  assert.equal((await ledger.record(other)).recorded, true);
+  await assert.rejects(
+    () => ledger.record({ ...withPi, eventId: 'evt_pi_conflict', sessionId: undefined }),
+    /conflicting payment intent link/);
+});
+
+test('async payment success claims once and other signed event types are acknowledged without recording', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'savage-async-events-'));
+  const route = createStripeWebhookRoute({ signingSecret: SECRET, offers: [OFFER], ledgerDirectory: directory, nowSeconds: () => NOW });
+  const server = createServer(async (req, res) => {
+    if (await route(req, res)) return;
+    res.writeHead(404).end();
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    await rm(directory, { recursive: true, force: true });
+  });
+  const url = `http://127.0.0.1:${server.address().port}/api/stripe/webhook`;
+  const post = async (packet) => fetch(url, {
+    method: 'POST', headers: { 'stripe-signature': packet.header }, body: packet.raw
+  });
+  const asyncEvent = (id) => event({}, { id, type: 'checkout.session.async_payment_succeeded' });
+  const first = await post(signed(asyncEvent('evt_async_1')));
+  assert.equal(first.status, 200);
+  assert.equal((await first.json()).recorded, true);
+  const second = await post(signed(asyncEvent('evt_async_2')));
+  assert.equal(second.status, 200);
+  assert.equal((await second.json()).duplicate, true, 'a second async event for the session must not fulfill twice');
+  assert.equal((await recordFiles(directory)).length, 1);
+  const piEvent = {
+    id: 'evt_pi_notice', type: 'payment_intent.succeeded', livemode: false,
+    data: { object: { object: 'payment_intent', id: 'pi_offline_test', amount: 1900, currency: 'usd' } }
+  };
+  const ignored = await post(signed(piEvent));
+  assert.equal(ignored.status, 200);
+  assert.equal((await ignored.json()).ignored, true);
+  assert.equal((await recordFiles(directory)).length, 1, 'non-claimable events record nothing');
+  const unsigned = await post(signed(piEvent, 'wrong_signing_secret_long'));
+  assert.equal(unsigned.status, 400, 'unsigned events are rejected, never acknowledged');
 });
