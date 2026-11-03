@@ -20,6 +20,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Diagnose native Windows temporary directory canonicalization
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          node -e "const fs=require('node:fs'),os=require('node:os'),p=require('node:path');const d=fs.mkdtempSync(p.join(os.tmpdir(),'audit-path-'));console.log(JSON.stringify({resolved:p.resolve(d),realpath:fs.realpathSync(d),native:fs.realpathSync.native(d),symlink:fs.lstatSync(d).isSymbolicLink()}));fs.rmdirSync(d)"
       - name: Run actual site suite with raw logs
         shell: bash
         run: |
