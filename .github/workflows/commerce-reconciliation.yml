@@ -1,5 +1,8 @@
 name: Commercial fulfillment reconciliation (review-only)
 on:
+  pull_request:
+    branches:
+      - gpt/facturforge-revenue-bridge-20261102
   push:
     branches:
       - gpt/commercial-fulfillment-reconciliation-20261102
