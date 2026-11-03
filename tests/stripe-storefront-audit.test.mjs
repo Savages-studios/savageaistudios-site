@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { collectStorefrontCheckoutLinks, validateStorefrontAuditConfig } from '../scripts/audit-stripe-storefront.mjs';
 
-test('inventory scans the actual checked-out storefront rather than an invented catalog', async () => {
+test('inventory scans the actual checked-out storefront rather than an invented catalog', async t => {
   const rows = await collectStorefrontCheckoutLinks(process.cwd());
+  t.diagnostic('actual unique Stripe checkout links in checked-out HTML: ' + rows.length);
   assert.ok(rows.length >= 30, 'real storefront should contain many distinct checkout URLs');
   assert.ok(rows.some(row => row.url === 'https://buy.stripe.com/7sYaEWdJW9cAeLogxW4Ni01'));
   assert.ok(rows.every(row => row.pages.length > 0));
