@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 /**
  * Executable cross-repository CONTRACT proof using both REAL compiled modules.
- * All records are locally created OFFLINE fixtures. No provider payment, buyer
- * delivery, real invoice, or external customer acceptance is represented.
+ * All purchase and buyer records are explicitly OFFLINE fixtures. The harness
+ * invokes the REAL compiled FacturForge invoice generator and persists its
+ * output through the real prepaid grant. No provider payment, independently
+ * delivered customer invoice, or external customer acceptance is represented.
  */
 import assert from 'node:assert/strict';
 import { createHash, createHmac } from 'node:crypto';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -19,15 +21,26 @@ const fail = message => { throw new Error('cross_repo_offline_contract:' + messa
 export async function verifyCrossRepoOfflineContract(env = process.env) {
   const modulePath = env.SAVAGE_MARKETPLACE_PREPAID_MODULE;
   const cliPath = env.SAVAGE_MARKETPLACE_GRANT_STATUS_CLI;
+  const invoiceModulePath = env.SAVAGE_MARKETPLACE_INVOICE_MODULE;
+  const invoiceFixturePath = env.SAVAGE_MARKETPLACE_INVOICE_FIXTURE;
   if (typeof modulePath !== 'string' || !isAbsolute(modulePath)
       || basename(modulePath) !== 'prepaid.js'
       || typeof cliPath !== 'string' || !isAbsolute(cliPath)
       || basename(cliPath) !== 'inspect-commerce-grant.js'
-      || dirname(resolve(modulePath)) !== dirname(resolve(cliPath)))
+      || dirname(resolve(modulePath)) !== dirname(resolve(cliPath))
+      || typeof invoiceModulePath !== 'string' || !isAbsolute(invoiceModulePath)
+      || basename(invoiceModulePath) !== 'index.js'
+      || dirname(resolve(invoiceModulePath)) !== dirname(resolve(modulePath))
+      || typeof invoiceFixturePath !== 'string' || !isAbsolute(invoiceFixturePath)
+      || basename(invoiceFixturePath) !== 'invoice-en16931.json'
+      || dirname(resolve(invoiceFixturePath)) !== resolve(dirname(modulePath), '../fixtures'))
     fail('compiled_marketplace_modules_required');
   // Actual Marketplace compiled code and its transitive dependencies must exist.
   const { FacturForgePrepaidStore, FACTURFORGE_PACK } =
     await import(pathToFileURL(resolve(modulePath)).href);
+  const { generateInvoice } = await import(pathToFileURL(resolve(invoiceModulePath)).href);
+  const invoice = JSON.parse(await readFile(invoiceFixturePath, 'utf8'));
+  assert.equal(typeof generateInvoice, 'function');
   const root = await mkdtemp(join(tmpdir(), 'savage-cross-repo-offline-'));
   try {
     const ledger = join(root, 'sales');
@@ -119,21 +132,50 @@ export async function verifyCrossRepoOfflineContract(env = process.env) {
       issuer, subject, jti, begun.challenge, proof,
     );
     await inspect('local_buyer_possession_acknowledged_unverified', 100);
-    // Actual durable store debit, explicitly NOT a generated invoice.
-    await store.deliver(grant.credential, 'cross-repo-offline-invoice-0001',
-      Buffer.from('offline-request-only'),
-      async () => ({ ok: true, data: { offlineFixture: true } }));
+    // Generate a REAL EN16931 invoice from Marketplace's existing offline
+    // fixture, through the actual durable prepaid delivery transaction.
+    const invoiceBytes = Buffer.from(JSON.stringify(invoice));
+    const generated = await store.deliver(grant.credential,
+      'cross-repo-offline-real-invoice-0001', invoiceBytes,
+      () => generateInvoice(invoice));
+    assert.equal(generated.ok, true);
+    assert.match(generated.data.xml, /CrossIndustryInvoice/);
+    assert.match(generated.data.xmlDigest, /^sha256:[a-f0-9]{64}$/);
     const used = await inspect('local_buyer_possession_acknowledged_unverified', 99);
     assert.equal(used.used, 1);
+    // Restart the actual store: same idempotency key must return persisted
+    // invoice bytes without calling the generator or spending another credit.
+    const restarted = new FacturForgePrepaidStore({
+      directory: grants, accountId, livemode: false,
+    });
+    const replay = await restarted.deliver(grant.credential,
+      'cross-repo-offline-real-invoice-0001', invoiceBytes,
+      async () => { throw new Error('invoice_must_not_regenerate_on_replay'); });
+    assert.deepEqual(replay, generated);
+    await inspect('local_buyer_possession_acknowledged_unverified', 99);
+    // A genuinely invalid input to the real generator cannot consume quota.
+    const invalidInvoice = structuredClone(invoice);
+    invalidInvoice.lines[0].vat.ratePercent = '0.00';
+    const rejected = await restarted.deliver(grant.credential,
+      'cross-repo-offline-invalid-invoice-0002',
+      Buffer.from(JSON.stringify(invalidInvoice)),
+      () => generateInvoice(invalidInvoice));
+    assert.equal(rejected.ok, false);
+    assert.equal(rejected.data, null);
+    await inspect('local_buyer_possession_acknowledged_unverified', 99);
     await store.revoke(grant.grantId, 'offline cross-repo revocation check');
     await inspect('revoked', 99);
     return {
       schema: 'savage.cross-repo.offline-contract-proof.v1',
       checks: ['compiled_marketplace_cli', 'real_site_sale_marker',
-        'local_buyer_acknowledgment', 'durable_quota_debit', 'revocation',
-        'redaction', 'original_buyer_checkout_account_binding'],
+        'local_buyer_acknowledgment', 'real_offline_invoice_generation',
+        'durable_quota_debit', 'restart_idempotent_invoice_replay',
+        'invalid_invoice_no_debit', 'revocation', 'redaction',
+        'original_buyer_checkout_account_binding'],
       paymentProviderContacted: false, actualPaymentVerified: false,
-      actualInvoiceGenerated: false, independentBuyerReceiptVerified: false,
+      actualInvoiceGeneratedFromOfflineFixture: true,
+      invoiceDeliveredToRealCustomer: false,
+      independentBuyerReceiptVerified: false,
       productionAccepted: false,
     };
   } finally {
