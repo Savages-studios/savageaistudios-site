@@ -25,7 +25,7 @@ const session = /^cs_(test|live)_[A-Za-z0-9_]+$/;
 const fail = (reason) => { throw new Error('facturforge_revenue_bridge:' + reason); };
 const digest = (value) => createHash('sha256').update(value).digest('hex');
 
-async function privateDirectory(path) {
+export async function privateDirectory(path) {
   if (typeof path !== 'string' || !isAbsolute(path)) fail('absolute_private_directory_required');
   const stat = await lstat(path);
   if (!stat.isDirectory() || stat.isSymbolicLink()
@@ -34,7 +34,7 @@ async function privateDirectory(path) {
   return path;
 }
 
-async function readPrivateJson(path) {
+export async function readPrivateJson(path) {
   const before = await lstat(path);
   if (!before.isFile() || before.isSymbolicLink() || before.size < 2 || before.size > 32768
       || (process.platform !== 'win32' && ((before.mode & 0o077) !== 0 || before.nlink !== 1)))
