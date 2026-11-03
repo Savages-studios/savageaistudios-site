@@ -59,3 +59,9 @@ Phase 2 obligation.
 ## Estate rule
 
 Update this file after any significant repo change. No claims without verification.
+
+## 2026-11-02 proposed security increment (branch-only, unmerged)
+
+[PR #8](https://github.com/sa6ag9/savageaistudios-site/pull/8) contains private-ledger directory and symlink hardening and descriptor-bound replay-file validation, on isolated `gpt/purchase-ledger-integrity-20261102`. The original code remains on main until review/merge. CI checked exact earlier PR head `95a221abea092291055e7a180cb192562cbee7af`: [run 41466251718](https://github.com/sa6ag9/savageaistudios-site/actions/runs/41466251718) passed Ubuntu (27/27, zero skips) and Windows (25 passed, 2 POSIX-only skipped) with raw logs inspected. [Homepage run 41466251715](https://github.com/sa6ag9/savageaistudios-site/actions/runs/41466251715) also passed. Updating this ground-truth note and the Phase 2 documentation will require fresh exact-head CI before any merge.
+
+Remaining gates are **independent security review, actual website webhook deployment and private persistent storage, Windows ACLs, Stripe test-mode checkout verified against correct account/price IDs, buyer fulfillment, refunds/recovery and reconciliation**. No test-mode provider call, customer delivery, production deployment, or funds movement occurred here. Do not claim revenue or launch completion.
