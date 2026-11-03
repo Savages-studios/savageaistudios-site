@@ -1,0 +1,31 @@
+name: Buyer grant reconciliation source verification
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/reconcile-buyer-grant-status.mjs'
+      - 'tests/buyer-grant-status-reconciliation.test.mjs'
+      - 'package.json'
+      - '.github/workflows/buyer-grant-reconciliation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Source tests on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Record exact tested source
+        run: git rev-parse HEAD
+      - name: Run actual full site Node tests
+        run: npm test
