@@ -10,6 +10,7 @@
     "test": "node --test tests/*.test.mjs",
     "start:webhook": "node server.mjs",
     "fulfill:facturforge": "node scripts/provision-facturforge-purchases.mjs",
-    "audit:commerce": "node scripts/audit-commerce-pipeline.mjs"
+    "audit:commerce": "node scripts/audit-commerce-pipeline.mjs",
+    "audit:storefront": "node scripts/audit-stripe-storefront.mjs"
   }
 }
