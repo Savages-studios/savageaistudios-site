@@ -55,13 +55,33 @@ function checkSignature(rawBody, header, secret, nowSeconds) {
   return timestamp;
 }
 
-export function verifySignedCheckoutEnvelope(rawBody, header, secret, nowSeconds = Math.floor(Date.now() / 1000)) {
+/**
+ * The only event types that may claim a fulfillment. Everything else with
+ * a valid Stripe signature is acknowledged by the route without claiming;
+ * unsigned or malformed events are rejected before classification.
+ */
+export const FULFILLMENT_EVENT_TYPES = new Set([
+  'checkout.session.completed',
+  'checkout.session.async_payment_succeeded'
+]);
+
+/**
+ * Verify Stripe's signature over the exact raw bytes and parse the event.
+ * This classifies nothing: callers decide which event types may proceed.
+ */
+export function verifySignedEventEnvelope(rawBody, header, secret, nowSeconds = Math.floor(Date.now() / 1000)) {
   // Parse only after verifying Stripe's signature over the exact raw bytes.
   const observedAt = checkSignature(rawBody, header, secret, nowSeconds);
   let event;
   try { event = object(JSON.parse(rawBody.toString('utf8'))); }
   catch { reject('invalid event JSON'); }
-  if (!event || event.type !== 'checkout.session.completed') reject('wrong event type');
+  if (!event || !text(event.type)) reject('missing event type');
+  return { event, observedAt };
+}
+
+export function verifySignedCheckoutEnvelope(rawBody, header, secret, nowSeconds = Math.floor(Date.now() / 1000)) {
+  const { event, observedAt } = verifySignedEventEnvelope(rawBody, header, secret, nowSeconds);
+  if (!FULFILLMENT_EVENT_TYPES.has(event.type)) reject('wrong event type');
   const session = object(object(event.data)?.object);
   if (!session || session.object !== 'checkout.session') reject('missing checkout session');
   return { event, session, observedAt };
@@ -90,9 +110,11 @@ export function verifyPaidCheckout(rawBody, header, secret, offers,
   const email = text(customer?.email) ?? text(session.customer_email);
   const sessionId = text(session.id);
   const eventId = text(event.id);
+  const paymentIntentId = session.payment_intent ?? null;
   if (account !== offer.accountId || event.livemode !== offer.livemode || session.livemode !== offer.livemode
       || !regex(new RegExp(`^cs_${offer.livemode ? 'live' : 'test'}_[A-Za-z0-9_]+$`), sessionId)
       || !regex(/^evt_[A-Za-z0-9_]+$/, eventId)
+      || (paymentIntentId !== null && !regex(/^pi_[A-Za-z0-9_]+$/, paymentIntentId))
       || (session.status !== undefined && session.status !== 'complete')
       || session.payment_status !== 'paid'
       || !email || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
@@ -108,6 +130,9 @@ export function verifyPaidCheckout(rawBody, header, secret, offers,
     amountTotal: offer.amountTotal, currency: offer.currency,
     accountId: offer.accountId, livemode: offer.livemode,
     observedAt: new Date(observedAt * 1000).toISOString(),
-    fulfillmentMode: offer.fulfillmentMode
+    fulfillmentMode: offer.fulfillmentMode,
+    // Link hint only: the checkout session above is the fulfillment key
+    // and the purchase identity; a payment intent never widens either.
+    paymentIntentId
   });
 }
