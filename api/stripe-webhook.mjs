@@ -1,4 +1,4 @@
-import { verifyPaidCheckout, verifySignedCheckoutEnvelope, verifySignedEventEnvelope, validateOfferCatalog, FULFILLMENT_EVENT_TYPES } from './stripe-verifier.mjs';
+import { verifyPaidCheckout, verifySignedChargeRefund, verifySignedCheckoutEnvelope, verifySignedEventEnvelope, validateOfferCatalog, FULFILLMENT_EVENT_TYPES } from './stripe-verifier.mjs';
 import { PurchaseLedger } from './purchase-ledger.mjs';
 
 async function readRaw(req, max = 256 * 1024) {
@@ -66,11 +66,43 @@ export function createStripeWebhookRoute({ signingSecret, stripeApiKey, offers, 
       respond(res, 400, { received: false, error: 'CHECKOUT_REJECTED', reason: error.message });
       return true;
     }
+    if (signedEvent.event.type === 'charge.refunded') {
+      // A verified refund revokes the entitlement its charge paid for.
+      // The claim is resolved through the payment-intent link stored at
+      // checkout time; a refund that matches no stored purchase is
+      // acknowledged as unmatched and records nothing (no phantom
+      // revocation), so Stripe stops retrying it.
+      let refund;
+      try {
+        refund = verifySignedChargeRefund(raw, req.headers['stripe-signature'],
+                                          signingSecret, catalog, nowSeconds?.());
+      } catch (error) {
+        respond(res, 400, { received: false, error: 'CHECKOUT_REJECTED', reason: error.message });
+        return true;
+      }
+      try {
+        const outcome = await ledger.revokeForRefund(refund);
+        if (!outcome.matched) {
+          respond(res, 200, { received: true, recorded: false, duplicate: false, revoked: false, unmatched: true });
+        } else if (outcome.duplicate) {
+          respond(res, 200, { received: true, recorded: false, duplicate: true, revoked: true,
+                              claimState: 'revoked', fulfillmentStatus: outcome.row?.fulfillment?.status ?? 'revoked' });
+        } else {
+          respond(res, 200, { received: true, recorded: true, duplicate: false, revoked: true,
+                              claimState: 'revoked', fulfillmentStatus: outcome.row?.fulfillment?.status ?? 'revoked' });
+        }
+      } catch {
+        // Do not acknowledge a revocation that could not be durably
+        // committed; Stripe's retry can complete it later.
+        respond(res, 503, { received: false, error: 'PURCHASE_LEDGER_UNAVAILABLE' });
+      }
+      return true;
+    }
     if (!FULFILLMENT_EVENT_TYPES.has(signedEvent.event.type)) {
-      // Authentic Stripe event that cannot claim a fulfillment (expiry,
-      // refund and payment-intent notices): acknowledge it so Stripe stops
-      // retrying, and record nothing. Only the two fulfillment event types
-      // proceed to checkout verification below.
+      // Authentic Stripe event that can neither claim nor revoke a
+      // fulfillment (expiry and payment-intent notices): acknowledge it
+      // so Stripe stops retrying, and record nothing. Only the two
+      // fulfillment event types proceed to checkout verification below.
       respond(res, 200, { received: true, recorded: false, duplicate: false, ignored: true });
       return true;
     }
@@ -107,7 +139,10 @@ export function createStripeWebhookRoute({ signingSecret, stripeApiKey, offers, 
       const outcome = await ledger.record(purchase);
       // A paid order always creates a durable human-fulfillment work item.
       // No delivery is claimed before a separate fulfillment worker acts.
-      respond(res, 200, { received: true, recorded: outcome.recorded, duplicate: outcome.duplicate, fulfillmentStatus: 'pending' });
+      // The reported status is the record's own: a redelivery after a
+      // refund reports 'revoked', never a resurrected 'pending'.
+      respond(res, 200, { received: true, recorded: outcome.recorded, duplicate: outcome.duplicate,
+                          fulfillmentStatus: outcome.row?.fulfillment?.status ?? (outcome.revoked ? 'revoked' : 'pending') });
     } catch {
       // Do not acknowledge an order that could not be durably committed.
       respond(res, 503, { received: false, error: 'PURCHASE_LEDGER_UNAVAILABLE' });

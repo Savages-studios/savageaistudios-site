@@ -87,6 +87,49 @@ export function verifySignedCheckoutEnvelope(rawBody, header, secret, nowSeconds
   return { event, session, observedAt };
 }
 
+/**
+ * Verify a signed charge.refunded event and extract the revocation
+ * instruction. The fulfillment key stays the checkout session; a refund
+ * reaches it only through the payment-intent link this ledger stored at
+ * checkout time. Shape errors reject (fail closed, like every verifier
+ * here); a well-formed refund that matches no stored purchase is NOT an
+ * error — the caller acknowledges it as unmatched and records nothing.
+ * The event type alone is the trigger: a partial refund also fires
+ * charge.refunded, and any verified refund of the charge revokes the
+ * entitlement (the refunded amount is carried for the audit record).
+ */
+export function verifySignedChargeRefund(rawBody, header, secret, offers,
+                                         nowSeconds = Math.floor(Date.now() / 1000)) {
+  const { event, observedAt } = verifySignedEventEnvelope(rawBody, header, secret, nowSeconds);
+  if (event.type !== 'charge.refunded') reject('wrong event type');
+  if (!Array.isArray(offers) || offers.length === 0) reject('trusted offer catalog missing');
+  if (new Set(offers.map((offer) => `${offer.accountId}/${offer.livemode}`)).size !== 1)
+    reject('refund is not bound to one configured account and mode');
+  const offer = offers[0];
+  // Direct-account Stripe events often omit event.account; when present
+  // (e.g. Connect), the account must match the trusted account.
+  const account = event.account === undefined ? offer.accountId : event.account;
+  const charge = object(object(event.data)?.object);
+  const eventId = text(event.id);
+  const chargeId = text(charge?.id);
+  const paymentIntentId = charge?.payment_intent ?? null;
+  if (account !== offer.accountId || typeof event.livemode !== 'boolean' || event.livemode !== offer.livemode
+      || !regex(/^evt_[A-Za-z0-9_]+$/, eventId)
+      || !charge || charge.object !== 'charge'
+      || !regex(/^ch_[A-Za-z0-9_]+$/, chargeId)
+      || !regex(/^pi_[A-Za-z0-9_]+$/, paymentIntentId)
+      || (charge.livemode !== undefined && charge.livemode !== event.livemode)
+      || (charge.amount_refunded !== undefined
+          && (!Number.isSafeInteger(charge.amount_refunded) || charge.amount_refunded < 0)))
+    reject('refund is not bound to configured account, mode and charge');
+  return Object.freeze({
+    eventId, chargeId, paymentIntentId,
+    amountRefunded: charge.amount_refunded ?? null,
+    livemode: offer.livemode,
+    observedAt: new Date(observedAt * 1000).toISOString()
+  });
+}
+
 export function verifyPaidCheckout(rawBody, header, secret, offers,
                                    nowSeconds = Math.floor(Date.now() / 1000),
                                    verifiedLineItems = undefined) {
