@@ -94,6 +94,7 @@ async function publishReplace(directory, temp, destination) {
 
 const EVENT_ID_PATTERN = /^evt_[A-Za-z0-9_]+$/;
 const PAYMENT_INTENT_PATTERN = /^pi_[A-Za-z0-9_]+$/;
+const CHARGE_ID_PATTERN = /^ch_[A-Za-z0-9_]+$/;
 const RECORD_NAME_PATTERN = /^[a-f0-9]{64}\.json$/;
 const CLAIM_NAME_PATTERN = /^[a-f0-9]{64}\.claim$/;
 
@@ -120,7 +121,20 @@ function assertValidClaimShape(claim, claimKey, sessionId, livemode) {
   if (!claim || typeof claim !== 'object' || Array.isArray(claim)) corrupt();
   if (claim.schemaVersion !== 2 || claim.kind !== 'checkout-session-claim') corrupt();
   if (claim.claimKey !== claimKey || claim.sessionId !== sessionId || claim.livemode !== livemode) corrupt();
-  if (claim.state !== 'pending' && claim.state !== 'fulfilled') corrupt();
+  if (claim.state !== 'pending' && claim.state !== 'fulfilled' && claim.state !== 'revoked') corrupt();
+  if (claim.state === 'revoked') {
+    // A revocation is a state transition on the original claim, never a
+    // rewrite of it: the revocation block must identify the verified
+    // refund event that caused it.
+    if (!EVENT_ID_PATTERN.test(claim.revocationEventId ?? '')) corrupt();
+    if (claim.revocationReason !== 'charge.refunded') corrupt();
+    if (!Number.isSafeInteger(claim.revokedAtMs) || claim.revokedAtMs <= 0) corrupt();
+    if (typeof claim.revokedAt !== 'string' || Number.isNaN(Date.parse(claim.revokedAt))) corrupt();
+    if (claim.revocationChargeId !== null && claim.revocationChargeId !== undefined &&
+        !CHARGE_ID_PATTERN.test(claim.revocationChargeId)) corrupt();
+    if (claim.revocationAmountRefunded !== null && claim.revocationAmountRefunded !== undefined &&
+        (!Number.isSafeInteger(claim.revocationAmountRefunded) || claim.revocationAmountRefunded < 0)) corrupt();
+  }
   if (typeof claim.leaseId !== 'string' || !/^[a-f0-9]{32}$/.test(claim.leaseId)) corrupt();
   if (!Number.isSafeInteger(claim.claimedAtMs) || claim.claimedAtMs <= 0) corrupt();
   if (!EVENT_ID_PATTERN.test(claim.eventId ?? '')) corrupt();
@@ -227,11 +241,12 @@ export class PurchaseLedger {
   }
 
   /**
-   * Resolve a payment intent to its checkout session using only link
-   * records this ledger itself stored (claims and sale rows). A payment
-   * intent linked to two different sessions is a conflict and fails closed.
+   * Find the checkout session a payment intent is linked to, using only
+   * link records this ledger itself stored (claims and sale rows).
+   * Returns null when no stored link exists. A payment intent linked to
+   * two different sessions is a conflict and fails closed.
    */
-  async #resolveSessionForPaymentIntent(paymentIntentId, livemode) {
+  async #findSessionForPaymentIntent(paymentIntentId, livemode) {
     if (!PAYMENT_INTENT_PATTERN.test(paymentIntentId ?? '')) throw new Error('invalid payment intent ID');
     const sessions = new Set();
     let names;
@@ -248,10 +263,20 @@ export class PurchaseLedger {
         sessions.add(claim.sessionId);
     }
     if (sessions.size > 1) throw new Error('conflicting payment intent link: multiple checkout sessions');
-    if (sessions.size === 0) throw new Error('unresolvable payment intent: no stored checkout session link');
+    if (sessions.size === 0) return null;
     const [sessionId] = sessions;
     const pattern = livemode ? /^cs_live_[A-Za-z0-9_]+$/ : /^cs_test_[A-Za-z0-9_]+$/;
     if (!pattern.test(sessionId)) throw new Error('conflicting payment intent link: mode mismatch');
+    return sessionId;
+  }
+
+  /**
+   * Resolve a payment intent to its checkout session; an unresolvable
+   * link fails closed (used where a purchase cannot proceed without it).
+   */
+  async #resolveSessionForPaymentIntent(paymentIntentId, livemode) {
+    const sessionId = await this.#findSessionForPaymentIntent(paymentIntentId, livemode);
+    if (sessionId === null) throw new Error('unresolvable payment intent: no stored checkout session link');
     return sessionId;
   }
 
@@ -302,6 +327,15 @@ export class PurchaseLedger {
       if (!row || row.sale?.checkoutSessionId !== context.sessionId || row.sale?.livemode !== context.livemode)
         throw new Error('conflicting or corrupt checkout session claim; refusing webhook acknowledgment');
       return { recorded: false, duplicate: true, row };
+    }
+    if (claim.state === 'revoked') {
+      // Revocation is terminal for the session: no later delivery may
+      // create or resurrect a fulfillment for it. The claim's durable
+      // record (when one was committed) stands as the evidence.
+      const row = typeof claim.recordFile === 'string'
+        ? await this.#readRecordIfPresent(join(this.directory, claim.recordFile))
+        : null;
+      return { recorded: false, duplicate: true, revoked: true, row };
     }
     // Pending claim. The claiming event's own record may already be durable
     // (crash between record commit and claim flip): adopt it, at any age.
@@ -384,6 +418,12 @@ export class PurchaseLedger {
         assertValidClaimShape(claim, claimKey, sessionId, effective.livemode);
         if (claim.state === 'pending') {
           await this.#fulfillClaim(claimPath, claim, recordFile);
+        } else if (claim.state === 'revoked') {
+          // This session was revoked (possibly while its claim was still
+          // pending, so its recordFile may be null). The durable record
+          // stands as evidence; the entitlement stays revoked and this
+          // redelivery changes nothing.
+          return { recorded: false, duplicate: true, revoked: true, row: prior };
         } else if (claim.recordFile !== recordFile) {
           throw new Error('conflicting or corrupt checkout session claim; refusing webhook acknowledgment');
         }
@@ -412,5 +452,118 @@ export class PurchaseLedger {
     }
     await syncDirectory(this.directory);
     return this.#commitRecord({ ...context, claim: pending });
+  }
+
+  /**
+   * Mark a revoked claim's durable record so its fulfillment is no
+   * longer actionable. The revocation block is copied from the claim —
+   * the claim is the single source of truth for which refund revoked
+   * the session — and the sale is never altered. Idempotent: an
+   * already-marked record is returned unchanged, which also heals a
+   * crash between the claim flip and this write.
+   */
+  async #markRecordRevoked(claim) {
+    let recordFile = claim.recordFile;
+    let row = null;
+    if (typeof recordFile === 'string') {
+      row = await this.#readRecordIfPresent(join(this.directory, recordFile));
+    } else {
+      // A claim revoked while still pending may have its claiming
+      // event's record durable under that event's own file name.
+      const candidate = `${sha256Hex(claim.eventId)}.json`;
+      row = await this.#readRecordIfPresent(join(this.directory, candidate));
+      if (row) recordFile = candidate;
+    }
+    if (!row) return null;
+    if (row.sale?.checkoutSessionId !== claim.sessionId || row.sale?.livemode !== claim.livemode)
+      throw new Error('conflicting or corrupt checkout session claim; refusing webhook acknowledgment');
+    if (row.fulfillment?.status === 'revoked' && row.revocation) return row;
+    const marked = {
+      ...row,
+      fulfillment: { ...row.fulfillment, status: 'revoked' },
+      revocation: {
+        reason: claim.revocationReason,
+        eventId: claim.revocationEventId,
+        chargeId: claim.revocationChargeId ?? null,
+        paymentIntentId: claim.paymentIntentId ?? null,
+        amountRefunded: claim.revocationAmountRefunded ?? null,
+        revokedAt: claim.revokedAt
+      }
+    };
+    const temp = await writeDurableTemp(this.directory, 'record', marked);
+    await publishReplace(this.directory, temp, join(this.directory, recordFile));
+    await syncDirectory(this.directory);
+    return marked;
+  }
+
+  /**
+   * Revoke the entitlement a verified charge refund cancels. The
+   * refund reaches its checkout session only through the payment-intent
+   * link stored at checkout time (the claim's link hint and the sale
+   * row's paymentIntentId) — the same links record() resolves in
+   * reverse. Outcomes:
+   *   matched:false            — no stored link/claim for this payment
+   *                              intent; nothing is written (no phantom
+   *                              revocation) and the caller acknowledges.
+   *   revoked:true             — this refund transitioned the claim.
+   *   duplicate:true           — the claim was already revoked; the
+   *                              FIRST revocation stands unchanged.
+   * The original claim and record are never deleted: revocation is a
+   * state transition plus a timestamp and a reason.
+   */
+  async revokeForRefund(refund) {
+    if (!EVENT_ID_PATTERN.test(refund?.eventId ?? '')) throw new Error('invalid event ID');
+    if (!PAYMENT_INTENT_PATTERN.test(refund?.paymentIntentId ?? '')) throw new Error('invalid payment intent ID');
+    if (typeof refund?.livemode !== 'boolean') throw new Error('invalid livemode');
+    if (refund?.chargeId != null && !CHARGE_ID_PATTERN.test(refund.chargeId)) throw new Error('invalid charge ID');
+    if (refund?.amountRefunded != null &&
+        (!Number.isSafeInteger(refund.amountRefunded) || refund.amountRefunded < 0))
+      throw new Error('invalid refunded amount');
+    await assertPrivateLedgerPath(this.directory);
+
+    const sessionId = await this.#findSessionForPaymentIntent(refund.paymentIntentId, refund.livemode);
+    if (sessionId === null)
+      return { matched: false, revoked: false, duplicate: false, claim: null, row: null };
+
+    const claimKey = checkoutSessionClaimKey(refund.livemode, sessionId);
+    const claimPath = join(this.directory, `${sha256Hex(claimKey)}.claim`);
+    let claim = await this.#readClaimIfPresent(claimPath);
+    if (!claim) {
+      // Sessions recorded before session claims existed have a record
+      // but no claim. Adopt that record into a claim so the revocation
+      // has a durable home; without any record there is nothing to
+      // revoke and the refund is simply unmatched.
+      const legacy = await this.#findLegacyRecord(sessionId, refund.livemode);
+      if (!legacy)
+        return { matched: false, revoked: false, duplicate: false, claim: null, row: null };
+      claim = this.#newClaim({
+        claimKey, sessionId, livemode: refund.livemode,
+        eventId: legacy.row.eventId, paymentIntentId: refund.paymentIntentId,
+        state: 'fulfilled', recordFile: legacy.recordFile
+      });
+    } else {
+      assertValidClaimShape(claim, claimKey, sessionId, refund.livemode);
+    }
+
+    if (claim.state === 'revoked') {
+      const row = await this.#markRecordRevoked(claim);
+      return { matched: true, revoked: false, duplicate: true, claim, row };
+    }
+
+    const parsedObserved = Date.parse(refund.observedAt ?? '');
+    const revokedAtMs = Number.isSafeInteger(parsedObserved) && parsedObserved > 0
+      ? parsedObserved : Date.now();
+    const revoked = {
+      ...claim, state: 'revoked',
+      revokedAt: new Date(revokedAtMs).toISOString(), revokedAtMs,
+      revocationEventId: refund.eventId, revocationReason: 'charge.refunded',
+      revocationChargeId: refund.chargeId ?? null,
+      revocationAmountRefunded: refund.amountRefunded ?? null
+    };
+    const temp = await writeDurableTemp(this.directory, 'claim', revoked);
+    await publishReplace(this.directory, temp, claimPath);
+    await syncDirectory(this.directory);
+    const row = await this.#markRecordRevoked(revoked);
+    return { matched: true, revoked: true, duplicate: false, claim: revoked, row };
   }
 }
