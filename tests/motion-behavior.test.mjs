@@ -87,7 +87,7 @@ function makeHarness({withCanvas=false}={}) {
 test("external checkout, email and other origins are never intercepted",()=>{
   const h=makeHarness();
   for(const url of [
-    "https://buy.stripe.com/28E7sKaxKagE8n00yY4Ni03",
+    "https://buy.stripe.com/bJe14mePedgege1gehaIM06",
     "https://ovmtruth.com",
     "https://reviewloop.bubbleapps.io/",
     "mailto:savagnic@gmail.com",
