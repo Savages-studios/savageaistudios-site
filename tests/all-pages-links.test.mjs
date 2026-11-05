@@ -27,8 +27,8 @@ function allIds(file) {
   return ids.get(file);
 }
 
-test("all 43 HTML pages have working local href/src paths and hash targets",()=>{
-  assert.equal(pages.length,43,"Site page inventory changed—review coverage intentionally");
+test("all 44 HTML pages have working local href/src paths and hash targets",()=>{
+  assert.equal(pages.length,44,"Site page inventory changed—review coverage intentionally");
   let inspected=0;
   for(const page of pages){
     const content=readFileSync(page,"utf8");
@@ -78,4 +78,24 @@ test("busy catalogs have product-specific accessible purchase names",()=>{
     assert.equal((html.match(/class="buy-btn"/g)||[]).length,count);
     assert.equal((html.match(/class="buy-btn" href="[^"]+" aria-label="[^"]+"/g)||[]).length,count);
   }
+});
+
+
+test("France invoice readiness pilot page is truthful and reachable",()=>{
+  const page=readFileSync(resolve(root,"invoice-readiness.html"),"utf8");
+  const catalog=readFileSync(resolve(root,"work.html"),"utf8");
+  assert.match(catalog,/href="invoice-readiness.html">France invoice readiness pilot/);
+  assert.match(page,/<title>France Invoice Readiness Pilot \| Savage AI Studios<\/title>/);
+  assert.match(page,/<a class="skip-link" href="#main">Skip to main content<\/a>/);
+  assert.match(page,/<main id="main">/);
+  assert.match(page,/Proposed pilot price: \$1,500/);
+  assert.match(page,/up to 10 synthetic or redacted structured invoice JSON cases/);
+  assert.match(page,/generated CII XML when FacturForge generation succeeds, with findings reported separately/);
+  assert.match(page,/does not replace that platform/);
+  assert.match(page,/does not submit invoices/);
+  assert.match(page,/Do not send production invoices/);
+  assert.doesNotMatch(page,/buy[.]stripe[.]com/i);
+  assert.doesNotMatch(page,/<input[^>]+type=["']file["']/i);
+  assert.equal((page.match(/<p><a class="btn btn-primary"/g) ?? []).length, 0, "primary CTAs must not inherit paragraph link colors");
+  assert.match(page,/href="contact.html">Request the pilot scope/);
 });
