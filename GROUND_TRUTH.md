@@ -1,7 +1,7 @@
 # savageaistudios-site — Ground Truth
 
-**Last verified:** 2026-11-04 (Tights first-hand: API state, merge + tree proofs)
-**Canonical branch:** main @ 967235e6a20e21e13374f1bd003244f6c79224a7 (post-merge-wave landing; this file's own commit sits on top)
+**Last verified:** 2026-11-05 (Tights first-hand: API state, merge + tree proofs, suite + link audit on the exact merged tree)
+**Canonical branch:** main @ 7bb9e8dbe29ec35a2a5c0d6802e89a1dec77bab7 (PR #22 merge; this file's own commit sits on top)
 
 **2026-11-04 merge wave:** site stack PRs #10–#16 landed on main in order (merges 15e7c95041→967235e6a2), then savage-marketplace PR #170. Published pages byte-identical: old→new delta = 25 files (24 added, package.json modified), **zero HTML files changed**; the 43 buy.stripe.com URLs on the live pages are unchanged (all old-account — replacing them is the Stripe live-rewire job, untouched by this wave).
 
@@ -83,3 +83,10 @@ Remaining gates are **independent security review, actual website webhook deploy
 - PR #19 CI passed on Ubuntu and Windows. The three Vercel checks reported success/ready deployments; those are deployment checks and do not, by themselves, prove the custom-domain production page was fetched successfully. The source repository's hosting record above says GitHub Pages serves the site; this PR did not change DNS or hosting configuration.
 - The page source is present on `main`. Public production reachability of `https://savageaistudios.com/invoice-readiness.html` was not independently verified in this update. Do not describe it as a completed production deployment until a direct live fetch succeeds.
 - The $1,500 figure remains proposed. Stripe checkout, correct account and price binding, webhook-to-fulfillment behavior, refunds, and customer data transfer remain unverified.
+
+## 2026-11-05 update — Stripe repoint (PR #20) + catalog publishing (PR #22)
+
+- **PR #20 (Stripe repoint)** merged 2026-11-05 (main `cdaabc9b28b7`): every buy link on the site now points at the NEW Stripe account (`acct_1UYG8zCG8Je0vWdb`) per `~/workspace/stripe-rewire-2026-11-04/DOOR-REGISTRY.json` (76 live doors); the 43 old-account URLs recorded in the 2026-11-04 section above are gone. Five flagship doors (Faultline $499/$999, CEROS Report $999, MoneyEngine $79, Starr Signature Genome $299) are PUBLIC per Savage's 2026-11-05 ruling.
+- **PR #22 (catalog publishing)** merged 2026-11-05 (merge commit `7bb9e8dbe29e`; merged tree `897253261ed` byte-identical to the verified PR head tree; **111 blobs**, base 91 + 20 new): 19 new product pages under `products/<catalog-slug>/` for every previously pageless PUBLIC door (both Reversal doors, 3 gateway credit packs, 3 spec-ad tiers, FR-Invoice Bridge, both Faultline tiers, CEROS Report, MoneyEngine, Starr Signature Genome, Regulatory Delta Report, Regulatory Change Monitor, MCP Conformance Audit, Competitive Dominance Audit, coloring-books bundle) + `catalog/index.html` listing all **62 PUBLIC** products by family with their registry buy links. Test inventories updated (44→64 pages; 43→63 motion-checked). PARKED (12) and GATED (2) records carry no page and no listing, per the master catalog's own do-not-list marking (Founding $249 quoted-only; AgentPay license floor manual-only).
+- **Tights' verification of record (own runs on the exact tree):** suite **82/82** (`npm test`); all **62** distinct buy.stripe.com URLs on the site match DOOR-REGISTRY.json exactly by SKU; **zero** of the 44 old-account URLs present anywhere; catalog index carries exactly the 62 PUBLIC URLs once each; catalog↔registry cross-check zero disagreements across all 76 records.
+- Known follow-ups (not done here): wire `catalog/` into site nav; refresh the now-stale FR-Invoice Bridge card copy on `work.html` (test-pinned); 24 pre-existing PUBLIC pages live at legacy short slugs rather than catalog slugs (the catalog index links to the pages that exist).
