@@ -90,10 +90,12 @@ test("France invoice readiness pilot page is truthful and reachable",()=>{
   assert.match(page,/<main id="main">/);
   assert.match(page,/Proposed pilot price: \$1,500/);
   assert.match(page,/up to 10 synthetic or redacted structured invoice JSON cases/);
+  assert.match(page,/generated CII XML when FacturForge generation succeeds, with findings reported separately/);
   assert.match(page,/does not replace that platform/);
   assert.match(page,/does not submit invoices/);
   assert.match(page,/Do not send production invoices/);
-  assert.doesNotMatch(page,/buy\\.stripe\\.com/);
+  assert.doesNotMatch(page,/buy[.]stripe[.]com/i);
   assert.doesNotMatch(page,/<input[^>]+type=["']file["']/i);
+  assert.equal((page.match(/<p><a class="btn btn-primary"/g) ?? []).length, 0, "primary CTAs must not inherit paragraph link colors");
   assert.match(page,/href="contact.html">Request the pilot scope/);
 });
