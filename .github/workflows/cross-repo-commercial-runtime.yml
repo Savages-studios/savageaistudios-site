@@ -1,0 +1,77 @@
+name: Cross-repository commercial runtime contract (offline only)
+
+on:
+  pull_request:
+    paths:
+      - 'integration/verify-cross-repo-offline-contract.mjs'
+      - 'tests/cross-repo-runtime-preflight.test.mjs'
+      - 'package.json'
+      - '.github/workflows/cross-repo-commercial-runtime.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-preflight:
+    name: Site preflight on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Record exact site source
+        run: git rev-parse HEAD
+      - name: Check cross-repo script syntax
+        run: node --check integration/verify-cross-repo-offline-contract.mjs
+      - name: Run full site test suite including actual refusal cases
+        run: npm test
+
+  real-compiled-offline-integration:
+    name: Both actual private repositories, offline local contract only
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Require independently provisioned read-only Marketplace repository access
+        env:
+          MARKETPLACE_READ_TOKEN: ${{ secrets.SAVAGE_MARKETPLACE_READ_TOKEN }}
+        run: |
+          if [ -z "$MARKETPLACE_READ_TOKEN" ]; then
+            echo "BLOCKED: SAVAGE_MARKETPLACE_READ_TOKEN is absent; no cross-repo runtime result is claimed."
+            exit 1
+          fi
+      - uses: actions/checkout@v4
+        with:
+          repository: sa6ag9/savage-marketplace
+          ref: cf1aa583f1cec050851056da32ef0f5a514a31a7
+          token: ${{ secrets.SAVAGE_MARKETPLACE_READ_TOKEN }}
+          path: marketplace
+          persist-credentials: false
+      - name: Record exact source of both repositories
+        run: |
+          git rev-parse HEAD
+          git -C marketplace rev-parse HEAD
+      - name: Install actual Marketplace dependencies from lockfile
+        working-directory: marketplace
+        run: npm ci
+      - name: Build actual Marketplace compiled CLI and prepaid store
+        working-directory: marketplace
+        run: npm run build
+      - name: Execute real site → compiled Marketplace CLI against private OFFLINE grant files
+        env:
+          SAVAGE_MARKETPLACE_PREPAID_MODULE: ${{ github.workspace }}/marketplace/products/facturforge/dist/prepaid.js
+          SAVAGE_MARKETPLACE_GRANT_STATUS_CLI: ${{ github.workspace }}/marketplace/products/facturforge/dist/inspect-commerce-grant.js
+        run: npm run verify:cross-repo:offline
