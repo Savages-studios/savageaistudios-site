@@ -1,0 +1,37 @@
+name: Multi-offer commercial dispatch source verification
+on:
+  push:
+    branches:
+      - gpt/multi-offer-fulfillment-dispatch-20261103
+  pull_request:
+    branches:
+      - gpt/storefront-provider-catalog-audit-20261103
+permissions:
+  contents: read
+jobs:
+  dispatch-source:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Actual source SHA and complete Node tests
+        shell: bash
+        run: |
+          set -o pipefail
+          git rev-parse HEAD
+          npm test 2>&1 | tee commercial-dispatch-tests.log
+      - name: Retain raw source tests
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: commercial-dispatch-${{ matrix.os }}
+          path: commercial-dispatch-tests.log
+          if-no-files-found: error

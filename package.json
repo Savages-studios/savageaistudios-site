@@ -11,6 +11,7 @@
     "start:webhook": "node server.mjs",
     "fulfill:facturforge": "node scripts/provision-facturforge-purchases.mjs",
     "audit:commerce": "node scripts/audit-commerce-pipeline.mjs",
-    "audit:storefront": "node scripts/audit-stripe-storefront.mjs"
+    "audit:storefront": "node scripts/audit-stripe-storefront.mjs",
+    "dispatch:commerce": "node scripts/dispatch-commerce-fulfillment.mjs"
   }
 }
