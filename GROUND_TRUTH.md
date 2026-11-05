@@ -1,7 +1,9 @@
 # savageaistudios-site — Ground Truth
 
-**Last verified:** 2026-11-03 (Tights first-hand: API state, tree proofs, local suite runs on pulled trees)
-**Canonical branch:** main @ a574a47809 (post-PR #18 merge; this file's own commit sits on top)
+**Last verified:** 2026-11-04 (Tights first-hand: API state, merge + tree proofs)
+**Canonical branch:** main @ 967235e6a20e21e13374f1bd003244f6c79224a7 (post-merge-wave landing; this file's own commit sits on top)
+
+**2026-11-04 merge wave:** site stack PRs #10–#16 landed on main in order (merges 15e7c95041→967235e6a2), then savage-marketplace PR #170. Published pages byte-identical: old→new delta = 25 files (24 added, package.json modified), **zero HTML files changed**; the 43 buy.stripe.com URLs on the live pages are unchanged (all old-account — replacing them is the Stripe live-rewire job, untouched by this wave).
 
 ## What this repo is
 
