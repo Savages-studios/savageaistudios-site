@@ -12,6 +12,7 @@
     "fulfill:facturforge": "node scripts/provision-facturforge-purchases.mjs",
     "audit:commerce": "node scripts/audit-commerce-pipeline.mjs",
     "audit:storefront": "node scripts/audit-stripe-storefront.mjs",
-    "dispatch:commerce": "node scripts/dispatch-commerce-fulfillment.mjs"
+    "dispatch:commerce": "node scripts/dispatch-commerce-fulfillment.mjs",
+    "audit:buyer-grants": "node scripts/reconcile-buyer-grant-status.mjs"
   }
 }
