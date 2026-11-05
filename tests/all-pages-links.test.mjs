@@ -27,8 +27,8 @@ function allIds(file) {
   return ids.get(file);
 }
 
-test("all 44 HTML pages have working local href/src paths and hash targets",()=>{
-  assert.equal(pages.length,44,"Site page inventory changed—review coverage intentionally");
+test("all 64 HTML pages have working local href/src paths and hash targets",()=>{
+  assert.equal(pages.length,64,"Site page inventory changed—review coverage intentionally");
   let inspected=0;
   for(const page of pages){
     const content=readFileSync(page,"utf8");
