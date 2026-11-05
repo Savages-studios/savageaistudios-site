@@ -1,0 +1,39 @@
+name: Commercial fulfillment reconciliation (review-only)
+on:
+  pull_request:
+    branches:
+      - gpt/facturforge-revenue-bridge-20261102
+  push:
+    branches:
+      - gpt/commercial-fulfillment-reconciliation-20261102
+permissions:
+  contents: read
+jobs:
+  source-and-reconciliation:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Diagnose native Windows temporary directory canonicalization
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          node -e "const fs=require('node:fs'),os=require('node:os'),p=require('node:path');const d=fs.mkdtempSync(p.join(os.tmpdir(),'audit-path-'));console.log(JSON.stringify({resolved:p.resolve(d),realpath:fs.realpathSync(d),native:fs.realpathSync.native(d),symlink:fs.lstatSync(d).isSymbolicLink()}));fs.rmdirSync(d)"
+      - name: Run actual site suite with raw logs
+        shell: bash
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee commerce-reconciliation-tests.log
+      - name: Preserve raw evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: commerce-reconciliation-${{ matrix.os }}
+          path: commerce-reconciliation-tests.log
+          if-no-files-found: error
