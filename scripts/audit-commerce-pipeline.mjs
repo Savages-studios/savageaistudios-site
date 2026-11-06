@@ -60,6 +60,12 @@ function checkSale(row, filename, offers) {
   return { sale, offer };
 }
 
+export function assertUniqueCheckoutSession(seen, sale) {
+  const key = JSON.stringify([sale.accountId, sale.livemode, sale.checkoutSessionId]);
+  if (seen.has(key)) fail('duplicate_checkout_session_across_events');
+  seen.add(key);
+}
+
 function checkMarker(marker, row) {
   if (marker?.schema !== 'savage.facturforge.provision.v1'
       || marker.eventId !== row.eventId
@@ -95,9 +101,7 @@ export async function reconcileCommercialFulfillment(env = process.env) {
     if (!hex.test(name.slice(0, -5))) fail('unexpected_sale_filename');
     const row = await readPrivateJson(join(ledger, name));
     const { sale, offer } = checkSale(row, name, bySku);
-    const sessionKey = JSON.stringify([sale.accountId, sale.livemode, sale.checkoutSessionId]);
-    if (checkoutSessions.has(sessionKey)) fail('duplicate_checkout_session_across_events');
-    checkoutSessions.add(sessionKey);
+    assertUniqueCheckoutSession(checkoutSessions, sale);
     saleNames.add(name);
     let marker;
     try { marker = await readPrivateJson(join(markers, name)); }
