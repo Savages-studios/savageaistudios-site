@@ -152,11 +152,12 @@ export async function provisionPendingFacturForgeSales(env = process.env) {
   // Preflight the entire FacturForge queue BEFORE any Marketplace grant is issued.
   // Two signed events for one Checkout Session are one purchase, not two grants.
   const queued = [];
+  let skipped = 0;
   const sessionOwners = new Map();
   for (const filename of (await readdir(ledger)).sort()) {
     if (!hex.test(filename.slice(0, -5)) || !filename.endsWith('.json')) continue;
     const row = await readPrivateJson(join(ledger, filename));
-    if (row?.sale?.sku !== FACTURFORGE_SKU) continue;
+    if (row?.sale?.sku !== FACTURFORGE_SKU) { skipped++; continue; }
     const purchase = verifyQueuedFacturForgePurchase(row, filename, offer);
     const key = purchase.sessionId;
     if (sessionOwners.has(key)) fail('duplicate_checkout_session_in_queue');
@@ -165,9 +166,7 @@ export async function provisionPendingFacturForgeSales(env = process.env) {
   }
   let processed = 0;
   let already = 0;
-  let skipped = 0;
   for (const { filename, row, purchase } of queued) {
-    if (!hex.test(filename.slice(0, -5)) || !filename.endsWith('.json')) continue;
     if (env.SAVAGE_CHECKOUT_SESSION_ID
         && purchase.sessionId !== env.SAVAGE_CHECKOUT_SESSION_ID) { skipped++; continue; }
     const markerName = filename;
