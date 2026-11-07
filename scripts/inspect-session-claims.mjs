@@ -9,13 +9,16 @@ const digest=value=>createHash('sha256').update(value).digest('hex');
  * No result authorizes automatic retry or customer entitlement revocation. */
 export function inspectSessionClaims({claims,purchases,markers}) {
   if(!Array.isArray(claims)||!Array.isArray(purchases)||!Array.isArray(markers)) fail('record_arrays_required');
-  const purchasesByEvent=new Map();
+  const purchasesByEvent=new Map(),sessionOwners=new Set();
   for(const row of purchases) {
     if(!event.test(row?.eventId??'')||!session.test(row?.checkoutSessionId??'')
       ||!/^acct_[A-Za-z0-9_]+$/.test(row?.accountId??'')
       ||typeof row.livemode!=='boolean'||!hex.test(row?.purchaseBinding??'')
       ||row.checkoutSessionId.startsWith('cs_live_')!==row.livemode
       ||purchasesByEvent.has(row.eventId)) fail('invalid_or_duplicate_purchase');
+    const sessionKey=JSON.stringify([row.accountId,row.livemode,row.checkoutSessionId]);
+    if(sessionOwners.has(sessionKey)) fail('duplicate_checkout_session');
+    sessionOwners.add(sessionKey);
     purchasesByEvent.set(row.eventId,row);
   }
   const markerByEvent=new Map();
@@ -25,7 +28,7 @@ export function inspectSessionClaims({claims,purchases,markers}) {
       ||marker.status!=='provisioned_pending_buyer_receipt') fail('invalid_or_duplicate_marker');
     markerByEvent.set(marker.eventId,marker);
   }
-  const seenNames=new Set(),entries=[];
+  const seenNames=new Set(),claimedEvents=new Set(),entries=[];
   for(const {filename,claim} of claims) {
     if(typeof filename!=='string'||!/^session-[a-f0-9]{64}\.claim$/.test(filename)
       ||seenNames.has(filename)) fail('invalid_or_duplicate_claim_name');
@@ -33,6 +36,8 @@ export function inspectSessionClaims({claims,purchases,markers}) {
     if(claim?.schema!=='savage.facturforge.session-claim.v1'
       ||!event.test(claim.eventId??'')||!session.test(claim.checkoutSessionId??'')
       ||!hex.test(claim.purchaseBinding??'')) fail('incomplete_or_corrupt_claim');
+    if(claimedEvents.has(claim.eventId)) fail('duplicate_claim_event');
+    claimedEvents.add(claim.eventId);
     const purchase=purchasesByEvent.get(claim.eventId);
     if(!purchase||purchase.checkoutSessionId!==claim.checkoutSessionId
       ||purchase.purchaseBinding!==claim.purchaseBinding
@@ -47,6 +52,10 @@ export function inspectSessionClaims({claims,purchases,markers}) {
         :'uncertain_external_grant_outcome_manual_reconciliation_required',
       automaticRetryAllowed:false,providerPaymentVerified:false,buyerDeliveryVerified:false});
   }
+  // No marker can be treated as inspected unless a matching, authenticated
+  // claim was included in the same read-only snapshot.
+  for(const markerEvent of markerByEvent.keys())
+    if(!claimedEvents.has(markerEvent)) fail('orphan_marker_without_claim');
   return {schema:'savage.facturforge.claim-recovery-inspection.v1',
     count:entries.length,entries,automaticRetryAllowed:false,
     providerPaymentVerified:false,buyerDeliveryVerified:false};
