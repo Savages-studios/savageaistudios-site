@@ -3,6 +3,7 @@
  * Never invokes Marketplace, retries grants, changes files, or claims buyer delivery.
  */
 import { readdir } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { privateDirectory, readPrivateJson } from './provision-facturforge-purchases.mjs';
@@ -11,6 +12,7 @@ import { inspectSessionClaims } from './inspect-session-claims.mjs';
 const fail = reason => { throw new Error('claim_ledger_reader:' + reason); };
 const saleName = /^[a-f0-9]{64}\.json$/;
 const claimName = /^session-[a-f0-9]{64}\.claim$/;
+const digest = value => createHash('sha256').update(value).digest('hex');
 
 export async function inspectPrivateClaimLedger({ledgerDirectory,markerDirectory}) {
   const ledger = await privateDirectory(ledgerDirectory);
@@ -18,9 +20,13 @@ export async function inspectPrivateClaimLedger({ledgerDirectory,markerDirectory
   if (resolve(ledger) === resolve(markersDir)) fail('storage_roots_must_be_distinct');
   const purchases = [], claims = [], markers = [];
   for (const name of (await readdir(ledger)).sort()) {
-    if (!saleName.test(name)) continue;
+    if (!saleName.test(name)) {
+      if (name.endsWith('.json')) fail('unexpected_purchase_filename');
+      continue;
+    }
     const row = await readPrivateJson(join(ledger,name));
     if (row?.sale?.sku !== 'COMM-20260908-MARKETPLACE-FACTURFORGE-PACK100') continue;
+    if (name !== digest(row.eventId ?? '') + '.json') fail('purchase_filename_identity_mismatch');
     if (row.fulfillment?.status !== 'pending') fail('unexpected_purchase_status');
     purchases.push({
       eventId:row.eventId, checkoutSessionId:row.sale.checkoutSessionId,
@@ -40,6 +46,14 @@ export async function inspectPrivateClaimLedger({ledgerDirectory,markerDirectory
   }
   // A marker without its matching purchase is an accounting defect, not proof of fulfillment.
   const purchaseIds = new Set(purchases.map(p=>p.eventId));
+  const purchaseSessions = new Set();
+  for (const purchase of purchases) {
+    const key = JSON.stringify([purchase.accountId,purchase.livemode,purchase.checkoutSessionId]);
+    if (purchaseSessions.has(key)) fail('duplicate_checkout_session');
+    purchaseSessions.add(key);
+  }
+  const claimEvents = new Set(claims.map(row=>row.claim?.eventId));
+  for (const marker of markers) if (!claimEvents.has(marker.eventId)) fail('marker_without_session_claim');
   for (const marker of markers) if (!purchaseIds.has(marker.eventId)) fail('orphan_provision_marker');
   const inspection = inspectSessionClaims({claims,purchases,markers});
   return {...inspection,orphanMarkerCount:0,providerPaymentVerified:false,
