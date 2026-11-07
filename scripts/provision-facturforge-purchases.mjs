@@ -194,7 +194,7 @@ export async function provisionPendingFacturForgeSales(env = process.env) {
         schema: 'savage.facturforge.session-claim.v1',
         checkoutSessionId: purchase.sessionId, eventId: row.eventId,
         purchaseBinding: row.purchaseBinding,
-      }) + '\\n');
+      }) + '\n');
       await claimHandle.sync();
     } finally { await claimHandle.close(); }
     if (process.platform !== 'win32') {
