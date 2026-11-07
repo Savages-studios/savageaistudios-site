@@ -53,8 +53,8 @@ export async function inspectPrivateClaimLedger({ledgerDirectory,markerDirectory
     purchaseSessions.add(key);
   }
   const claimEvents = new Set(claims.map(row=>row.claim?.eventId));
-  for (const marker of markers) if (!claimEvents.has(marker.eventId)) fail('marker_without_session_claim');
   for (const marker of markers) if (!purchaseIds.has(marker.eventId)) fail('orphan_provision_marker');
+  for (const marker of markers) if (!claimEvents.has(marker.eventId)) fail('marker_without_session_claim');
   const inspection = inspectSessionClaims({claims,purchases,markers});
   return {...inspection,orphanMarkerCount:0,providerPaymentVerified:false,
     buyerDeliveryVerified:false,automaticRetryAllowed:false};
