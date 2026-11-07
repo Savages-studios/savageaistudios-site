@@ -16,6 +16,7 @@ import {
 } from './provision-facturforge-purchases.mjs';
 
 const hex = /^[a-f0-9]{64}$/;
+const claimName = /^[a-f0-9]{64}\.claim$/;
 const eventId = /^evt_[A-Za-z0-9_]+$/;
 const sessionId = /^cs_(test|live)_[A-Za-z0-9_]+$/;
 const buyerEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -85,6 +86,28 @@ export async function reconcileCommercialFulfillment(env = process.env) {
   const markers = await privateDirectory(env.SAVAGE_FULFILLMENT_RECEIPT_DIR);
   if (resolve(ledger) === resolve(markers)) fail('distinct_storage_roots_required');
 
+  // A sale row survives refunds. Its checkout-session claim is the
+  // authoritative revocation gate. Never queue a refunded purchase again.
+  // Legacy sales without claims remain visible for explicit migration review.
+  const claims = new Map();
+  for (const name of (await readdir(ledger)).sort()) {
+    if (!name.endsWith('.claim')) continue;
+    if (!claimName.test(name)) fail('unexpected_claim_filename');
+    const claim = await readPrivateJson(join(ledger, name));
+    if (claim?.schemaVersion !== 2 || claim.kind !== 'checkout-session-claim'
+        || !['pending', 'fulfilled', 'revoked'].includes(claim.state)
+        || typeof claim.sessionId !== 'string'
+        || typeof claim.livemode !== 'boolean'
+        || claim.claimKey !== `${claim.livemode ? 'live' : 'test'}:${claim.sessionId}`
+        || name !== sha(claim.claimKey) + '.claim'
+        || !eventId.test(claim.eventId ?? '')
+        || (claim.recordFile !== null && !hex.test((claim.recordFile ?? '').replace(/\.json$/, '')))
+        || (claim.recordFile !== null && !claim.recordFile.endsWith('.json')))
+      fail('invalid_checkout_claim');
+    if (claims.has(claim.claimKey)) fail('duplicate_checkout_claim');
+    claims.set(claim.claimKey, claim);
+  }
+
   const entries = [];
   const saleNames = new Set();
   for (const name of (await readdir(ledger)).sort()) {
@@ -92,6 +115,13 @@ export async function reconcileCommercialFulfillment(env = process.env) {
     if (!hex.test(name.slice(0, -5))) fail('unexpected_sale_filename');
     const row = await readPrivateJson(join(ledger, name));
     const { sale, offer } = checkSale(row, name, bySku);
+    const claim = claims.get(`${sale.livemode ? 'live' : 'test'}:${sale.checkoutSessionId}`);
+    if (claim) {
+      if (claim.state === 'revoked') fail('revoked_checkout_must_not_be_reprovisioned');
+      if (claim.state !== 'fulfilled' || claim.recordFile !== name
+          || claim.eventId !== row.eventId)
+        fail('sale_checkout_claim_conflict');
+    }
     saleNames.add(name);
     let marker;
     try { marker = await readPrivateJson(join(markers, name)); }
