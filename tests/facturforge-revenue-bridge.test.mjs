@@ -80,7 +80,16 @@ test('real failed child process never marks an offline queue as paid, provisione
   const { markers, env } = await setup(t);
   await assert.rejects(provisionPendingFacturForgeSales(env),
     /authenticated_marketplace_provisioning_failed/);
-  assert.deepEqual(await readdir(markers), []);
+  const files = await readdir(markers);
+  assert.equal(files.length, 1);
+  assert.match(files[0], /^session-[a-f0-9]{64}\\.claim$/);
+  const claim = JSON.parse(await readFile(join(markers, files[0]), 'utf8'));
+  assert.equal(claim.checkoutSessionId, purchase.sessionId);
+  assert.equal(claim.eventId, purchase.eventId);
+  // A failed external call may have committed a grant. Never automatically retry.
+  await assert.rejects(provisionPendingFacturForgeSales(env),
+    /checkout_session_claim_requires_reconciliation/);
+  assert.deepEqual(await readdir(markers), files);
 });
 
 test('conflicting persisted marker fails closed without invoking the provider command', async t => {
