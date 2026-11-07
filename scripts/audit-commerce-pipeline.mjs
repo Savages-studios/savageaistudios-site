@@ -38,7 +38,7 @@ function checkSale(row, filename, offers) {
       || typeof sale.livemode !== 'boolean'
       || sale.checkoutSessionId.startsWith('cs_live_') !== sale.livemode
       || sale.providerEventId !== row.eventId
-      || fulfillment.sku !== sale.sku || fulfillment.status !== 'pending'
+      || fulfillment.sku !== sale.sku || !['pending', 'revoked'].includes(fulfillment.status)
       || fulfillment.sourceEventId !== row.eventId
       || !['manual', 'automated'].includes(fulfillment.method))
     fail('invalid_sale_record');
@@ -114,14 +114,24 @@ export async function reconcileCommercialFulfillment(env = process.env) {
     if (!name.endsWith('.json')) continue; // ignore temporary publication files
     if (!hex.test(name.slice(0, -5))) fail('unexpected_sale_filename');
     const row = await readPrivateJson(join(ledger, name));
+    // Check the durable claim before interpreting a revoked sale as actionable.
+    const rawSale = row?.sale;
+    const claim = typeof rawSale?.livemode === 'boolean' && typeof rawSale?.checkoutSessionId === 'string'
+      ? claims.get(`${rawSale.livemode ? 'live' : 'test'}:${rawSale.checkoutSessionId}`) : null;
     const { sale, offer } = checkSale(row, name, bySku);
-    const claim = claims.get(`${sale.livemode ? 'live' : 'test'}:${sale.checkoutSessionId}`);
     if (claim) {
-      if (claim.state === 'revoked') fail('revoked_checkout_must_not_be_reprovisioned');
+      if (claim.state === 'revoked') {
+        if (claim.recordFile !== name || claim.eventId !== row.eventId
+            || row.fulfillment.status !== 'revoked'
+            || row.revocation?.eventId !== claim.revocationEventId)
+          fail('revoked_checkout_record_conflict');
+        fail('revoked_checkout_must_not_be_reprovisioned');
+      }
       if (claim.state !== 'fulfilled' || claim.recordFile !== name
           || claim.eventId !== row.eventId)
         fail('sale_checkout_claim_conflict');
     }
+    if (row.fulfillment.status === 'revoked') fail('revoked_sale_without_matching_claim');
     saleNames.add(name);
     let marker;
     try { marker = await readPrivateJson(join(markers, name)); }
