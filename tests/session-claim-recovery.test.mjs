@@ -1,0 +1,17 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { inspectSessionClaims } from '../scripts/inspect-session-claims.mjs';
+const digest=s=>createHash('sha256').update(s).digest('hex');
+const p={eventId:'evt_abc',checkoutSessionId:'cs_test_abc',accountId:'acct_abc',livemode:false,purchaseBinding:'a'.repeat(64)};
+const c={schema:'savage.facturforge.session-claim.v1',eventId:p.eventId,checkoutSessionId:p.checkoutSessionId,purchaseBinding:p.purchaseBinding};
+const filename='session-'+digest(JSON.stringify([p.accountId,p.livemode,p.checkoutSessionId]))+'.claim';
+const input=()=>({purchases:[p],claims:[{filename,claim:c}],markers:[]});
+test('uncertain external outcome blocks automatic retry',()=>{const r=inspectSessionClaims(input());assert.equal(r.entries[0].automaticRetryAllowed,false);assert.match(r.entries[0].status,/manual_reconciliation/)});
+test('local marker never proves buyer delivery',()=>{const x=input();x.markers=[{eventId:p.eventId,purchaseBinding:p.purchaseBinding,checkoutSessionId:p.checkoutSessionId,grantId:'b'.repeat(64),status:'provisioned_pending_buyer_receipt'}];const r=inspectSessionClaims(x);assert.equal(r.entries[0].buyerDeliveryVerified,false)});
+test('reject duplicate claims',()=>{const x=input();x.claims.push(x.claims[0]);assert.throws(()=>inspectSessionClaims(x),/duplicate_claim/)});
+test('reject corrupted incomplete claim',()=>{const x=input();x.claims[0]={filename,claim:{...c,purchaseBinding:undefined}};assert.throws(()=>inspectSessionClaims(x),/corrupt_claim/)});
+test('reject forged filename account routing',()=>{const x=input();x.claims[0].filename='session-'+'0'.repeat(64)+'.claim';assert.throws(()=>inspectSessionClaims(x),/binding_conflict/)});
+test('reject orphan claim',()=>{const x=input();x.purchases=[];assert.throws(()=>inspectSessionClaims(x),/binding_conflict/)});
+test('reject contradictory marker',()=>{const x=input();x.markers=[{eventId:p.eventId,purchaseBinding:'b'.repeat(64),checkoutSessionId:p.checkoutSessionId,grantId:'c'.repeat(64),status:'provisioned_pending_buyer_receipt'}];assert.throws(()=>inspectSessionClaims(x),/marker_claim_conflict/)});
+test('reject duplicate purchase event',()=>{const x=input();x.purchases.push(p);assert.throws(()=>inspectSessionClaims(x),/duplicate_purchase/)});
