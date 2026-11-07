@@ -15,3 +15,7 @@ test('reject forged filename account routing',()=>{const x=input();x.claims[0].f
 test('reject orphan claim',()=>{const x=input();x.purchases=[];assert.throws(()=>inspectSessionClaims(x),/binding_conflict/)});
 test('reject contradictory marker',()=>{const x=input();x.markers=[{eventId:p.eventId,purchaseBinding:'b'.repeat(64),checkoutSessionId:p.checkoutSessionId,grantId:'c'.repeat(64),status:'provisioned_pending_buyer_receipt'}];assert.throws(()=>inspectSessionClaims(x),/marker_claim_conflict/)});
 test('reject duplicate purchase event',()=>{const x=input();x.purchases.push(p);assert.throws(()=>inspectSessionClaims(x),/duplicate_purchase/)});
+
+test('reject duplicate provider checkout sessions across distinct events',()=>{const x=input();x.purchases.push({...p,eventId:'evt_other'});assert.throws(()=>inspectSessionClaims(x),/duplicate_checkout_session/);});
+test('reject orphan marker that has no inspected claim',()=>{const x=input();x.claims=[];x.markers=[{eventId:p.eventId,purchaseBinding:p.purchaseBinding,checkoutSessionId:p.checkoutSessionId,grantId:'b'.repeat(64),status:'provisioned_pending_buyer_receipt'}];assert.throws(()=>inspectSessionClaims(x),/orphan_marker_without_claim/);});
+test('reject marker referencing a nonexistent sale',()=>{const x=input();x.markers=[{eventId:'evt_unknown',purchaseBinding:p.purchaseBinding,checkoutSessionId:p.checkoutSessionId,grantId:'b'.repeat(64),status:'provisioned_pending_buyer_receipt'}];assert.throws(()=>inspectSessionClaims(x),/orphan_marker_without_claim/);});
