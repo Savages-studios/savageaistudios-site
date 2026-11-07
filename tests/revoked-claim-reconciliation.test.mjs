@@ -25,7 +25,7 @@ async function fixture() {
   const claimPath = join(ledger, sha('test:' + purchase.sessionId) + '.claim');
   const env = { SAVAGE_PURCHASE_LEDGER_DIR: ledger, SAVAGE_FULFILLMENT_RECEIPT_DIR: markers,
     SAVAGE_STRIPE_PRODUCTS_JSON: JSON.stringify([offer]) };
-  return { root, env, claimPath };
+  return { root, env, claimPath, salePath: join(ledger, sha(purchase.eventId) + '.json') };
 }
 
 test('fulfilled checkout is visible to reconciliation', async () => {
@@ -47,6 +47,10 @@ test('revoked checkout cannot reenter provisioning queue', async () => {
     claim.revokedAtMs = Date.now();
     claim.revokedAt = new Date(claim.revokedAtMs).toISOString();
     await writeFile(f.claimPath, JSON.stringify(claim), { mode: 0o600 });
+    const row = JSON.parse(await readFile(f.salePath, 'utf8'));
+    row.fulfillment.status = 'revoked';
+    row.revocation = { eventId: claim.revocationEventId, reason: claim.revocationReason };
+    await writeFile(f.salePath, JSON.stringify(row), { mode: 0o600 });
     await assert.rejects(reconcileCommercialFulfillment(f.env),
       /revoked_checkout_must_not_be_reprovisioned/);
   } finally { await rm(f.root, { recursive: true, force: true }); }
@@ -59,5 +63,17 @@ test('conflicting checkout claim cannot authorize a different sale', async () =>
     claim.eventId = 'evt_wrong_purchase';
     await writeFile(f.claimPath, JSON.stringify(claim), { mode: 0o600 });
     await assert.rejects(reconcileCommercialFulfillment(f.env), /sale_checkout_claim_conflict/);
+  } finally { await rm(f.root, { recursive: true, force: true }); }
+});
+
+
+test('revoked sale without matching durable claim fails closed', async () => {
+  const f = await fixture();
+  try {
+    const row = JSON.parse(await readFile(f.salePath, 'utf8'));
+    row.fulfillment.status = 'revoked';
+    await writeFile(f.salePath, JSON.stringify(row), { mode: 0o600 });
+    await assert.rejects(reconcileCommercialFulfillment(f.env),
+      /revoked_sale_without_matching_claim/);
   } finally { await rm(f.root, { recursive: true, force: true }); }
 });
