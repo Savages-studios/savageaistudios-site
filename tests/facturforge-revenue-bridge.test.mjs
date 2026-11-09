@@ -82,7 +82,7 @@ test('real failed child process never marks an offline queue as paid, provisione
     /authenticated_marketplace_provisioning_failed/);
   const files = await readdir(markers);
   assert.equal(files.length, 1);
-  assert.match(files[0], /^session-[a-f0-9]{64}\\.claim$/);
+  assert.match(files[0], /^session-[a-f0-9]{64}\.claim$/);
   const claim = JSON.parse(await readFile(join(markers, files[0]), 'utf8'));
   assert.equal(claim.checkoutSessionId, purchase.sessionId);
   assert.equal(claim.eventId, purchase.eventId);
