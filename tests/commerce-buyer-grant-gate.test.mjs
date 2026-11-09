@@ -1,0 +1,15 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { assessBuyerGrantCoverage } from '../scripts/commerce-buyer-grant-gate.mjs';
+const id = c => c.repeat(64);
+const commerce = () => ({schema:'savage.commercial.fulfillment.reconciliation.v1',count:1,entries:[{eventDigest:id('a'),purchaseBinding:id('b'),stage:'local_provision_marker_awaiting_buyer_receipt'}],independentlyVerifiedProviderPayment:false,customerDeliveryVerified:false,bankSettlementVerified:false});
+const grants = () => ({schema:'savage.commercial.buyer-grant-reconciliation.v1',inspectedCount:1,pendingUninspected:0,providerPaymentIndependentlyRechecked:false,buyerReceiptIndependentlyVerified:false,entries:[{eventDigest:id('a'),purchaseBinding:id('b'),grantId:id('c'),status:'awaiting_buyer_possession',used:0,remaining:100,providerPaymentIndependentlyRechecked:false,buyerReceiptIndependentlyVerified:false}]});
+test('valid local records never imply verified payment or delivery',()=>{const r=assessBuyerGrantCoverage(commerce(),grants());assert.equal(r.inspectedGrants,1);assert.equal(r.readyForAutomaticCustomerEntitlement,false);assert.equal(r.awaitingBuyer,1)});
+test('mismatched binding rejected',()=>{const g=grants();g.entries[0].purchaseBinding=id('d');assert.throws(()=>assessBuyerGrantCoverage(commerce(),g),/invalid_or_unbound_grant/)});
+test('missing inspection rejected',()=>{const g=grants();g.entries=[];g.inspectedCount=0;assert.throws(()=>assessBuyerGrantCoverage(commerce(),g),/missing_pending_grant_inspection/)});
+test('duplicate grant rejected',()=>{const g=grants();g.entries.push({...g.entries[0]});g.inspectedCount=2;assert.throws(()=>assessBuyerGrantCoverage(commerce(),g),/invalid_or_unbound_grant/)});
+test('unknown grant rejected',()=>{const g=grants();g.entries[0].eventDigest=id('e');assert.throws(()=>assessBuyerGrantCoverage(commerce(),g),/invalid_or_unbound_grant/)});
+test('quota mismatch rejected',()=>{const g=grants();g.entries[0].remaining=101;assert.throws(()=>assessBuyerGrantCoverage(commerce(),g),/invalid_or_unbound_grant/)});
+test('forged independent verification flags rejected',()=>{const g=grants();g.providerPaymentIndependentlyRechecked=true;assert.throws(()=>assessBuyerGrantCoverage(commerce(),g),/invalid_input_contract/)});
+test('revoked grants reported without entitlement',()=>{const g=grants();g.entries[0].status='revoked';const r=assessBuyerGrantCoverage(commerce(),g);assert.equal(r.revoked,1);assert.equal(r.readyForAutomaticCustomerEntitlement,false)});
+test('empty ledgers are valid without fabricated sales',()=>{const c=commerce(),g=grants();c.count=0;c.entries=[];g.inspectedCount=0;g.entries=[];const r=assessBuyerGrantCoverage(c,g);assert.equal(r.sales,0)});
