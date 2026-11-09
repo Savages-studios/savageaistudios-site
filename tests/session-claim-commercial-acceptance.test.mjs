@@ -34,8 +34,8 @@ test('one checkout session cannot yield two fulfilled sale records across distin
     assert.equal(second.recorded, false);
     assert.equal(second.duplicate, true);
     const files = await readdir(dir);
-    assert.equal(files.filter(name => /^[a-f0-9]{64}\\.json$/.test(name)).length, 1);
-    assert.equal(files.filter(name => /^[a-f0-9]{64}\\.claim$/.test(name)).length, 1);
+    assert.equal(files.filter(name => /^[a-f0-9]{64}\.json$/.test(name)).length, 1);
+    assert.equal(files.filter(name => /^[a-f0-9]{64}\.claim$/.test(name)).length, 1);
   });
 });
 
