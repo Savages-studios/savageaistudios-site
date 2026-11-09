@@ -96,3 +96,53 @@ Remaining gates are **independent security review, actual website webhook deploy
 - Savage reconnected PostHog himself (Project 667701, US Cloud; organization ID on file in the wiring report) and supplied the project token — PostHog's public write-only key, designed to ship in public pages. **PR #23 merged 2026-11-05**: the official PostHog web snippet (loader + init, `api_host: https://us.i.posthog.com`, `defaults: '2026-05-30'`, `person_profiles: 'identified_only'`, options unaltered) inserted into the `<head>` of all **64 HTML pages** — the site has no build step or shared template, so each standalone page carries it directly; pages copied from existing ones will inherit it.
 - **Tights' verification of record (own runs):** every PR file is +8/−0 with the added block byte-identical across all 64 files; 64 files contain the snippet, exactly 64 `posthog.init` calls site-wide; suite **82/82** on the exact merged tree (zero test changes); merged tree byte-identical to the verified PR head tree; blob count unchanged at 111 (modifications only).
 - The token is a public client key by design (PostHog's settings page states it is safe for public apps); it is not a secret and needs no vault handling. Event ingestion is a live-account read on PostHog's side — page fetches that don't execute JS fire no events, so first confirmation comes from real visitor traffic or an account-side check.
+
+## 2026-11-09 update — automated fulfillment built (not deployed)
+
+- Base for this update: `main` at `7357864e2fae02a4479873121287d495ec168db4`.
+- New capability in-repo: `api/fulfillment.mjs` (automated delivery
+  engine), `api/fulfillment-manifest.mjs` (the single declared SKU ->
+  deliverable mapping), and `docs/AUTOMATED_FULFILLMENT.md` (design,
+  scope truth, and the operator go-live checklist). `server.mjs` wires
+  the engine only when a configured offer is `fulfillmentMode:
+  "automated"` and the private goods, ledger, and email environment is
+  present.
+- The production manifest wires exactly the five Glitch coloring-book
+  SKUs and `COLORING-BOOKS-BUNDLE-29`. Deliverable SHA-256 values and
+  byte counts come from `sa6ag9/glitch-books-private/SHA256-MANIFEST.json`;
+  the PDFs themselves remain in that private repository and are loaded at
+  deploy time from `SAVAGE_FULFILLMENT_GOODS_DIR`. Every file is
+  byte-count and SHA-256 checked before an email payload is produced.
+- Delivery is idempotent at two layers: the existing purchase ledger
+  allows one durable record per checkout session (duplicate webhook
+  deliveries never reach the sender), and the new hash-chained delivery
+  log treats a `delivered` record as terminal for its Stripe event. The
+  delivery log stores the event ID, session ID, SKU, deliverable hashes,
+  a hash of the recipient address, and a hash of the recipient domain —
+  never the full buyer email.
+- Fail-closed, each with a logged refusal: bad Stripe signature (rejected
+  by the pre-existing verifier before fulfillment), unknown SKU, either
+  held SKU (FacturForge Pro
+  `COMM-20260908-MARKETPLACE-FACTURFORGE-PRO-PACK-49`; CEROS Cockpit UI
+  Pack `SIAV6-EA-CEROS-COCKPIT-UI-PACK-49`), a non-automated offer, a
+  missing deliverable, and a deliverable hash mismatch.
+- Verification executed on the build tree: site suite **110/110 before
+  -> 118/118 after** (`npm test`; the 8 new tests cover PDF and
+  digital-pack happy paths, duplicate event, bad signature, unknown SKU,
+  held SKU, tampered deliverable, the HTTP sender contract, and the
+  production manifest). The Glitch fulfillment verifier passes against
+  the new tree: **26/26 checks** (goods in `glitch-books-private`,
+  storefront in this repo's `coloring-books/`).
+- Copy consequence: the coloring-books pages for the wired SKUs now say
+  the PDFs are "delivered by email automatically on payment." No other
+  offer's delivery wording was changed; offers without a verified
+  manifest entry remain manual, and no package was invented for
+  FacturForge, Monetized MCP, Phase-Space Navigator, or Symplectic WASM
+  SDK.
+- **What is NOT true:** this fulfillment is not live. The webhook
+  endpoint has not been deployed by this change, no Stripe endpoint was
+  registered, no sender was configured, no real or test-mode Stripe
+  checkout was run, and no email was sent. The public apex remains static
+  hosting, which cannot execute `server.mjs`. Automated delivery becomes
+  live only after every step in the operator checklist in
+  `docs/AUTOMATED_FULFILLMENT.md` has been executed and proven.

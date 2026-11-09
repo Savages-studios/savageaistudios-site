@@ -43,13 +43,16 @@ export async function retrieveStripeLineItems(sessionId, apiKey, fetchImpl = fet
 
 /** HTTP handler; caller must connect it to a server-side host, NOT static hosting. */
 export function createStripeWebhookRoute({ signingSecret, stripeApiKey, offers, ledgerDirectory,
-                                           nowSeconds, stripeFetch } = {}) {
+                                           nowSeconds, stripeFetch, fulfillment } = {}) {
   if (typeof signingSecret !== 'string' || signingSecret.length < 16) throw new Error('Stripe webhook signing secret required');
   const catalog = validateOfferCatalog(offers);
   if (new Set(catalog.map((offer) => `${offer.accountId}/${offer.livemode}`)).size !== 1)
     throw new Error('All offers for one signing secret must bind one Stripe account and mode');
-  if (catalog.some((offer) => offer.fulfillmentMode !== 'manual'))
-    throw new Error('Automatic fulfillment requires an implemented, durable delivery worker; not configured here');
+  if (catalog.some((offer) => offer.fulfillmentMode === 'automated')
+      && (!fulfillment || typeof fulfillment.fulfill !== 'function'))
+    throw new Error('Automatic fulfillment requires a configured fulfillment engine');
+  if (fulfillment !== undefined && (!fulfillment || typeof fulfillment.fulfill !== 'function'))
+    throw new Error('Invalid fulfillment engine');
   const ledger = new PurchaseLedger(ledgerDirectory);
   return async (req, res) => {
     const pathname = new URL(req.url, 'http://localhost').pathname;
@@ -135,17 +138,46 @@ export function createStripeWebhookRoute({ signingSecret, stripeApiKey, offers, 
       respond(res, 400, { received: false, error: 'CHECKOUT_REJECTED', reason: error.message });
       return true;
     }
+    let outcome;
     try {
-      const outcome = await ledger.record(purchase);
-      // A paid order always creates a durable human-fulfillment work item.
-      // No delivery is claimed before a separate fulfillment worker acts.
-      // The reported status is the record's own: a redelivery after a
-      // refund reports 'revoked', never a resurrected 'pending'.
-      respond(res, 200, { received: true, recorded: outcome.recorded, duplicate: outcome.duplicate,
-                          fulfillmentStatus: outcome.row?.fulfillment?.status ?? (outcome.revoked ? 'revoked' : 'pending') });
+      outcome = await ledger.record(purchase);
     } catch {
       // Do not acknowledge an order that could not be durably committed.
       respond(res, 503, { received: false, error: 'PURCHASE_LEDGER_UNAVAILABLE' });
+      return true;
+    }
+    // The reported status is the record's own: a redelivery after a
+    // refund reports 'revoked', never a resurrected 'pending'. Automated
+    // delivery is attempted only for the one durable record created for
+    // this checkout session; a duplicate webhook never sends twice.
+    const recordedStatus = outcome.row?.fulfillment?.status
+      ?? (outcome.revoked ? 'revoked' : 'pending');
+    if (purchase.fulfillmentMode !== 'automated' || outcome.duplicate || outcome.revoked) {
+      respond(res, 200, { received: true, recorded: outcome.recorded, duplicate: outcome.duplicate,
+                          fulfillmentStatus: recordedStatus });
+      return true;
+    }
+    let delivery;
+    try {
+      delivery = await fulfillment.fulfill(purchase);
+    } catch {
+      respond(res, 503, { received: false, error: 'FULFILLMENT_UNAVAILABLE' });
+      return true;
+    }
+    if (delivery.status === 'delivered') {
+      respond(res, 200, { received: true, recorded: outcome.recorded, duplicate: outcome.duplicate,
+                          fulfillmentStatus: 'delivered' });
+    } else if (delivery.status === 'in_progress') {
+      respond(res, 200, { received: true, recorded: outcome.recorded, duplicate: true,
+                          fulfillmentStatus: 'delivery_in_progress' });
+    } else if (delivery.status === 'failed') {
+      // A transient sender failure is not acknowledged as complete;
+      // Stripe can retry the event and the delivery log permits a retry
+      // after its explicit failed record.
+      respond(res, 503, { received: false, error: 'FULFILLMENT_DELIVERY_FAILED' });
+    } else {
+      respond(res, 200, { received: true, recorded: outcome.recorded, duplicate: outcome.duplicate,
+                          fulfillmentStatus: 'fulfillment_refused', fulfillmentReason: delivery.reason });
     }
     return true;
   };
