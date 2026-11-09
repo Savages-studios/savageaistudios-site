@@ -174,6 +174,33 @@ export async function provisionPendingFacturForgeSales(env = process.env) {
       already++;
       continue;
     }
+    // Durable, cross-process session claim. Never release after a failed or timed-out
+    // external CLI: the provider may have issued a grant before the failure.
+    // A human must reconcile the Marketplace grant and marker before recovery.
+    const claimName = 'session-' + digest(JSON.stringify([
+      offer.accountId, offer.livemode, purchase.sessionId,
+    ])) + '.claim';
+    let claimHandle;
+    try {
+      claimHandle = await open(join(markers, claimName),
+        constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL
+        | (constants.O_NOFOLLOW ?? 0), 0o600);
+    } catch (error) {
+      if (error.code === 'EEXIST') fail('checkout_session_claim_requires_reconciliation');
+      throw error;
+    }
+    try {
+      await claimHandle.writeFile(JSON.stringify({
+        schema: 'savage.facturforge.session-claim.v1',
+        checkoutSessionId: purchase.sessionId, eventId: row.eventId,
+        purchaseBinding: row.purchaseBinding,
+      }) + '\n');
+      await claimHandle.sync();
+    } finally { await claimHandle.close(); }
+    if (process.platform !== 'win32') {
+      const parent = await open(markers, 'r');
+      try { await parent.sync(); } finally { await parent.close(); }
+    }
     // This invokes the existing Marketplace production CLI, not a fake
     // successful payment adapter. The CLI makes authenticated Stripe GETs,
     // verifies the actual paid Checkout, and commits the private grant.
