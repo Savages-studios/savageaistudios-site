@@ -7,6 +7,7 @@
  * FacturForge Marketplace provider-verifying adapter. Unknown SKUs never
  * receive credentials or fabricated grants.
  */
+import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { reconcileCommercialFulfillment } from './audit-commerce-pipeline.mjs';
@@ -31,6 +32,19 @@ export function buildCommercialFulfillmentPlan(reconciliation) {
       || reconciliation.independentlyVerifiedProviderPayment !== false
       || reconciliation.customerDeliveryVerified !== false
       || reconciliation.bankSettlementVerified !== false) fail('invalid_reconciliation_contract');
+  // The reconciliation report is a coherent snapshot contract, not merely an
+  // arbitrary array of work items. Reject stale or modified reports before
+  // calculating a grant plan. SHA-256 detects accidental mutation; it is NOT
+  // provider authentication or a signature.
+  const { contentFingerprint, ...unsignedReport } = reconciliation;
+  const expectedFingerprint = createHash('sha256')
+    .update(JSON.stringify(unsignedReport)).digest('hex');
+  if (typeof contentFingerprint !== 'string'
+      || !/^[a-f0-9]{64}$/.test(contentFingerprint)
+      || contentFingerprint !== expectedFingerprint)
+    fail('reconciliation_fingerprint_mismatch');
+  if (!Number.isSafeInteger(reconciliation.count) || reconciliation.count < 0)
+    fail('invalid_reconciliation_count');
   const seen = new Set();
   const bySku = new Map();
   for (const row of reconciliation.entries) {
