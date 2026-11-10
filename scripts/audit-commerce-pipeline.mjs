@@ -11,6 +11,7 @@ import { readdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { validateOfferCatalog } from '../api/stripe-verifier.mjs';
+import { assertUniqueCheckoutSessions } from './checkout-session-uniqueness.mjs';
 import {
   FACTURFORGE_SKU, privateDirectory, readPrivateJson,
 } from './provision-facturforge-purchases.mjs';
@@ -87,11 +88,13 @@ export async function reconcileCommercialFulfillment(env = process.env) {
 
   const entries = [];
   const saleNames = new Set();
+  const checkoutIdentities = [];
   for (const name of (await readdir(ledger)).sort()) {
     if (!name.endsWith('.json')) continue; // ignore temporary publication files
     if (!hex.test(name.slice(0, -5))) fail('unexpected_sale_filename');
     const row = await readPrivateJson(join(ledger, name));
     const { sale, offer } = checkSale(row, name, bySku);
+    checkoutIdentities.push(row);
     saleNames.add(name);
     let marker;
     try { marker = await readPrivateJson(join(markers, name)); }
@@ -111,6 +114,7 @@ export async function reconcileCommercialFulfillment(env = process.env) {
       purchaseBinding: row.purchaseBinding,
     });
   }
+  assertUniqueCheckoutSessions(checkoutIdentities);
   for (const name of await readdir(markers)) {
     if (!name.endsWith('.json')) continue;
     if (!hex.test(name.slice(0, -5)) || !saleNames.has(name))
