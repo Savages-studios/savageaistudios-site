@@ -1,29 +1,140 @@
 # savageaistudios-site — Ground Truth
 
-**Last verified:** 2026-11-05 (Tights first-hand: API state, merge + tree proofs, suite + snippet audit on the exact merged tree)
-**Canonical branch:** main @ 6929543f5088d6836202621e28c8e8bd30d48a93 (PR #23 merge; this file's own commit sits on top)
+**Last verified:** 2026-11-11 (Knights, fixes #101 + #102 session: API state re-read, tree materialized with every blob SHA-1 verified, suite and censuses run on the exact tree)
+**Canonical branch:** main @ `4efd64869a0ced6c4f9bf046b629e09417dba6d7` (this refresh lands on top of that head in its fix PR)
 
-**2026-11-04 merge wave:** site stack PRs #10–#16 landed on main in order (merges 15e7c95041→967235e6a2), then savage-marketplace PR #170. Published pages byte-identical: old→new delta = 25 files (24 added, package.json modified), **zero HTML files changed**; the 43 buy.stripe.com URLs on the live pages are unchanged (all old-account — replacing them is the Stripe live-rewire job, untouched by this wave).
+**Verification basis for every current-state figure below:** `GET /repos/Savages-studios/savageaistudios-site/git/ref/heads/main` (head above); recursive tree of that commit = 178 entries / **122 blobs**, each blob fetched and git-SHA-1 verified (122/122); `npm test` and the census commands named in each section, all run on the materialized tree this session. The dated sections after the Historical record banner are retained verbatim from earlier verifications and describe their own dates; where they conflict with the current-state sections, the current-state sections govern.
 
 ## What this repo is
 
 The public website for Savage AI Studios (savageaistudios.com,
-served by GitHub Pages since the 2026-11-03 DNS flip; Vercel
-abandoned). Round 2 is live: professional copy with no
-stats/count-based proof, contact + legal + Faultline pages.
-(Overmind's site is ovmtruth.com, a different surface.)
+served by GitHub Pages since the 2026-11-03 DNS flip; the in-tree
+`CNAME` is `savageaistudios.com`). A static site — 64 HTML pages, no
+build step — plus the estate's commerce machinery in `api/` (Stripe
+webhook, purchase ledger, fulfillment engine), which runs only where
+an operator deploys `server.mjs`; the public apex is static hosting
+and executes none of it. (Overmind's site is ovmtruth.com, a
+different surface.)
 
-## Verified current state
+## Verified current state (2026-11-11)
 
-- **Head:** `a574a47809` (merge of PR #18). Tree = 66 blobs
-  (blob-identical to the verified PR tree).
-- **Tests:** `node --test tests/*.test.mjs` — **45/45** by Tights'
-  local run on the exact merged tree (2026-11-03); baseline at the
-  parent head `2c44f688` was 35/35 by the same method.
-- The site carries the estate's customer-grade offers: Faultline
-  Exposure Audit **$199**, GitHub Forensic Audit **$299**, the
-  Glitch coloring books **$9**, and the FacturForge pack **$19**
-  (live Payment Link, fulfillment historically manual).
+- **Head / tree:** main @ `4efd64869a0ced6c4f9bf046b629e09417dba6d7`,
+  122 blobs — **verified** (API re-read + SHA-1-verified
+  materialization, this session).
+- **Tests:** `npm test` (`node --test tests/*.test.mjs`, 16 test
+  files) — **118/118 pass, 0 fail, 0 skipped** on the exact tree
+  above (Knights' local run, Node v24.22.1) — **verified**. The
+  previous GT head figures (suite 82/82, 43 links) and the audit-era
+  re-measurement (93/93, 62) are both superseded by this section.
+- **Pages:** **64 HTML pages** — 11 at root, 45 under
+  `products/<slug>/`, plus `products/index.html`,
+  `catalog/index.html`, and 6 under `coloring-books/` — **verified**
+  (`find . -name '*.html'`). `tests/all-pages-links.test.mjs` pins
+  the inventory at exactly 64 and verifies every local href/src path
+  and fragment target across all of them.
+- **Analytics:** the PostHog snippet (`posthog.init`; the project
+  key is a public client key by design) is present in **64/64
+  pages** — **verified** (`grep -rl posthog.init --include='*.html'`).
+  Whether events are currently being ingested is an account-side
+  read — **not established** from this repo.
+- **Commerce surface (inventory only):** **19 distinct
+  `buy.stripe.com` checkout URLs** in the HTML — 45 page-link pairs
+  across 15 files — **verified** with the repo's own collector
+  (`collectStorefrontCheckoutLinks` in
+  `scripts/audit-stripe-storefront.mjs`, the same inventory the
+  suite runs against the real tree). Inventory is not liveness:
+  nothing in this repo establishes that any given link currently
+  renders or charges (see "What is NOT true").
+- **Contact:** the site takes inquiries by **mailto** —
+  `mailto:savagnic@gmail.com` appears **200 times across 59 HTML
+  files** (waitlist buttons, direct-contact lines) — **verified**.
+  There is **no web form anywhere in the tree** (zero `<form`
+  elements, zero formsubmit references) since fix #101, below —
+  **verified**.
+- **Fulfillment:** `api/` holds 5 modules (fulfillment engine,
+  fulfillment manifest, purchase ledger, Stripe verifier, Stripe
+  webhook). The production manifest wires exactly **6 automated
+  SKUs** — the five Glitch coloring-book SKUs and
+  `COLORING-BOOKS-BUNDLE-29` — with a held-SKU refusal set —
+  **verified** from `api/fulfillment-manifest.mjs`. Deployment
+  state: **built, NOT deployed** — no Stripe endpoint registration,
+  sender configuration, or live checkout is evidenced anywhere in
+  this repo, and the operator checklist in
+  `docs/AUTOMATED_FULFILLMENT.md` remains the go-live path —
+  claim-state: **reported (standing record), consistent with all
+  in-tree evidence**.
+- **Open PRs:** **18** — **verified** via the API this session:
+  PR #54 (Klaviyo capture, non-draft, titled DO NOT MERGE until the
+  dashboard form exists; untouched by fixes #101/#102) and 17 draft
+  commerce-chain PRs (#25–#53 range).
+- **CI on the main head:** 7 check-runs on `4efd6486` — 5 success,
+  1 skipped (`Adjust Configuration`), **1 failure
+  (`homepage-static`)** — **verified** via the check-runs API; the
+  failure is recorded here as fact and is out of scope for fixes
+  #101/#102. Of the 7 workflow files, 3 are branch-locked to
+  2026-11 `gpt/*` feature branches (`commerce-reconciliation`,
+  `commercial-dispatch-source`, `storefront-offer-audit`),
+  `site-refresh` runs on pushes to main, `phase2-stripe-webhook`
+  on pull requests to main, and 2 are path-filtered pull-request
+  workflows — **verified** from the workflow files.
+
+## Fix #101 (2026-11-11) — the contact form is gone; here is the evidence
+
+Until this fix, `contact.html` carried the site's only form: a POST
+to `https://formsubmit.co/savagnic@gmail.com` (raw-email endpoint;
+`_next` → `contact-thanks.html`; `_captcha` on; `_honey`
+honeypot). That endpoint's FormSubmit activation was **never
+established**: no delivery evidence exists in this repo, and
+Knights' 2026-11-11 probe could not establish it either — a GET to
+the endpoint and a GET to a never-activated control address
+returned byte-identical generic "Form should POST" pages (HTTP
+200, differing only in per-request CSRF/Cloudflare tokens), so the
+non-submission probe does not discriminate activated from
+unactivated endpoints. Per queue row 54's own target, the form was
+therefore **replaced with the mailto pattern used across the rest
+of the site** (the bare `mailto:savagnic@gmail.com` anchor, as in
+the waitlist buttons and direct-contact lines). No test submission
+was sent: replacement loses no capability the site demonstrably
+relies on — there is no record of a form delivery ever arriving —
+so the row's probe-and-replace branch governs, not its
+last-resort-submission branch. Corrections that rode along:
+`legal.html` no longer describes a FormSubmit form; `about.html`'s
+CTA no longer says "Use the contact form";
+`invoice-readiness.html` now says "Do not attach invoice files to
+your email." `contact-thanks.html` remains in the tree (the
+suite's page inventory pins it), but nothing routes to it any
+longer.
+
+## What is NOT true (current, 2026-11-11)
+
+- Automated fulfillment is **not live**: no webhook-endpoint
+  deployment, Stripe endpoint registration, or sender configuration
+  is evidenced; delivery for the 6 wired SKUs remains manual until
+  the operator checklist in `docs/AUTOMATED_FULFILLMENT.md` is
+  executed and proven.
+- The 19 checkout URLs are an **inventory, not a liveness claim**:
+  per-link rendering/charge state is not established by anything in
+  this repo (buy.stripe.com rendering has been observed to flicker
+  independently of a link's active flag; re-check at promotion
+  time).
+- The FormSubmit endpoint's activation was **never proven** — and
+  the question is now moot: the form no longer exists.
+- **No completed live sale is evidenced in this repo.** The
+  purchase-ledger machinery records sales when deployed; nothing
+  here proves one has occurred.
+- PR #54 (Klaviyo capture) is **not merged**; no Klaviyo form
+  exists on main and onsite email capture is **not established**.
+- Main is **not all-green**: the `homepage-static` check-run on the
+  current head is failing (see CI above).
+
+## Estate rule
+
+Update this file after any significant repo change. No claims without verification.
+
+## Historical record (retained verbatim; each entry describes its own date)
+
+
+**2026-11-04 merge wave:** site stack PRs #10–#16 landed on main in order (merges 15e7c95041→967235e6a2), then savage-marketplace PR #170. Published pages byte-identical: old→new delta = 25 files (24 added, package.json modified), **zero HTML files changed**; the 43 buy.stripe.com URLs on the live pages are unchanged (all old-account — replacing them is the Stripe live-rewire job, untouched by this wave).
 
 ## The fulfillment gap — stated precisely
 
@@ -47,23 +158,6 @@ Post-audit merges by the account itself (before the train existed):
 
 #1 — this file's predecessor GROUND_TRUTH refresh. (The train took
 no other action here; #2/#4 above predate it.)
-
-## Parked PRs
-
-Drafts #10–#16 (site sales ↔ Stripe provisioning/reconciliation
-chain) remain open drafts, gated on the Stripe proof chain. PR #18
-merged 2026-11-03 (below).
-
-## Where it is going
-
-No D1–D12 ruling covers this repo. Standing site direction
-(campaign record): no stats/count-based proof anywhere on the
-site; professional register. The #4 proof debt is the repo's first
-Phase 2 obligation.
-
-## Estate rule
-
-Update this file after any significant repo change. No claims without verification.
 
 ## 2026-11-02 proposed security increment (branch-only, unmerged)
 
