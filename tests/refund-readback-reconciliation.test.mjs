@@ -1,0 +1,15 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { assessRefundReadback, reconcileRefundEvidence } from '../scripts/refund-readback-reconciliation.mjs';
+const sale = {checkoutSessionId:'cs_test_abc',paymentIntentId:'pi_abc',accountId:'acct_abc',livemode:false,amountTotal:7900,currency:'usd'};
+const refund = {id:'re_abc',charge:'ch_abc',currency:'usd',livemode:false,amount:7900,status:'succeeded'};
+const charge = {id:'ch_abc',payment_intent:'pi_abc',currency:'usd',livemode:false,amount:7900,amount_refunded:7900};
+const rb = {authenticatedByServer:true,accountId:'acct_abc',livemode:false,checkoutSessionId:'cs_test_abc',paymentIntentId:'pi_abc',refund,charge};
+test('full successful refund requires manual entitlement review',()=>{const r=reconcileRefundEvidence(sale,rb);assert.equal(r.entitlementAction,'review_full_refund_for_revocation');assert.equal(r.buyerDeliveryOrRevocationVerified,false)});
+test('pending refund does not revoke',()=>{assert.equal(assessRefundReadback(sale,{...refund,status:'pending'},charge).entitlementAction,'no_automatic_revocation')});
+test('partial refund does not revoke',()=>{assert.equal(assessRefundReadback(sale,{...refund,amount:2000},{...charge,amount_refunded:2000}).entitlementAction,'no_automatic_revocation')});
+test('mismatched charge payment intent rejected',()=>assert.throws(()=>assessRefundReadback(sale,refund,{...charge,payment_intent:'pi_other'})));
+test('wrong provider account rejected',()=>assert.throws(()=>reconcileRefundEvidence(sale,{...rb,accountId:'acct_other'})));
+test('unauthenticated readback rejected',()=>assert.throws(()=>reconcileRefundEvidence(sale,{...rb,authenticatedByServer:false})));
+test('refund greater than refunded charge rejected',()=>assert.throws(()=>assessRefundReadback(sale,refund,{...charge,amount_refunded:500})));
+test('mode mismatch rejected',()=>assert.throws(()=>assessRefundReadback(sale,{...refund,livemode:true},charge)));
