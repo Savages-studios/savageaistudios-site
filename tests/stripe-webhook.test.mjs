@@ -108,7 +108,7 @@ test('site route durably records verified sale AND manual fulfillment work and d
 test('trusted product configuration and raw signature validation fail closed', () => {
   assert.throws(() => validateOfferCatalog([]), /catalog/);
   assert.throws(() => validateOfferCatalog([{ ...OFFER, priceId: '' }]), /configuration/);
-  assert.throws(() => createStripeWebhookRoute({ signingSecret: SECRET, offers: [{ ...OFFER, fulfillmentMode: 'automated' }], ledgerDirectory: '/tmp/test-ledger' }), /worker/);
+  assert.throws(() => createStripeWebhookRoute({ signingSecret: SECRET, offers: [{ ...OFFER, fulfillmentMode: 'automated' }], ledgerDirectory: '/tmp/test-ledger' }), /configured fulfillment engine/);
   const correct = signed(event());
   assert.equal(verifyPaidCheckout(correct.raw, correct.header, SECRET, [OFFER], NOW).sku, OFFER.sku);
   assert.throws(() => verifyPaidCheckout(Buffer.concat([correct.raw, Buffer.from(' ')]), correct.header, SECRET, [OFFER], NOW), /signature/);
