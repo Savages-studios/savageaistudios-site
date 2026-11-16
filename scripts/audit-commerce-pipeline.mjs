@@ -11,6 +11,7 @@ import { readdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { validateOfferCatalog } from '../api/stripe-verifier.mjs';
+import { assertUniqueCheckoutSessions } from './checkout-session-uniqueness.mjs';
 import {
   FACTURFORGE_SKU, privateDirectory, readPrivateJson,
 } from './provision-facturforge-purchases.mjs';
@@ -119,6 +120,7 @@ export async function reconcileCommercialFulfillment(env = process.env) {
   // A checkout session is one purchase, even if multiple distinct provider events
   // were recorded. Replaying a second event must never create another grant.
   const checkoutSessions = new Set();
+  const checkoutIdentities = [];
   for (const name of (await readdir(ledger)).sort()) {
     if (!name.endsWith('.json')) continue; // ignore temporary publication files
     if (!hex.test(name.slice(0, -5))) fail('unexpected_sale_filename');
@@ -128,6 +130,7 @@ export async function reconcileCommercialFulfillment(env = process.env) {
     const claim = typeof rawSale?.livemode === 'boolean' && typeof rawSale?.checkoutSessionId === 'string'
       ? claims.get(`${rawSale.livemode ? 'live' : 'test'}:${rawSale.checkoutSessionId}`) : null;
     const { sale, offer } = checkSale(row, name, bySku);
+    checkoutIdentities.push(row);
     if (claim) {
       if (claim.state === 'revoked') {
         if (claim.recordFile !== name || claim.eventId !== row.eventId
@@ -161,6 +164,7 @@ export async function reconcileCommercialFulfillment(env = process.env) {
       purchaseBinding: row.purchaseBinding,
     });
   }
+  assertUniqueCheckoutSessions(checkoutIdentities);
   for (const name of await readdir(markers)) {
     if (!name.endsWith('.json')) continue;
     if (!hex.test(name.slice(0, -5)) || !saleNames.has(name))
