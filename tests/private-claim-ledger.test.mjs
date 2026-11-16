@@ -48,3 +48,29 @@ test('corrupt private claim cannot be read as trusted evidence',async t=>{
  const x=await setup(t);await writeFile(x.claimFile,'{bad json',{mode:0o600});
  await assert.rejects(inspectPrivateClaimLedger({ledgerDirectory:x.ledger,markerDirectory:x.markers}),/private_record_unreadable/);
 });
+
+test('rejects purchase whose filename does not bind to event identity',async t=>{
+ const x=await setup(t);
+ await writeFile(x.saleFile,JSON.stringify({...purchase,eventId:'evt_forged_claimread2'}),{mode:0o600});
+ await assert.rejects(inspectPrivateClaimLedger({ledgerDirectory:x.ledger,markerDirectory:x.markers}),/purchase_filename_identity_mismatch/);
+});
+test('rejects duplicate checkout session across distinct event records',async t=>{
+ const x=await setup(t);
+ const duplicate={...purchase,eventId:'evt_duplicate_claimread2'};
+ await writeFile(join(x.ledger,hash(duplicate.eventId)+'.json'),JSON.stringify(duplicate),{mode:0o600});
+ await assert.rejects(inspectPrivateClaimLedger({ledgerDirectory:x.ledger,markerDirectory:x.markers}),/duplicate_checkout_session/);
+});
+test('rejects provisioning marker without durable claim',async t=>{
+ const x=await setup(t);
+ await rm(x.claimFile);
+ await writeFile(join(x.markers,hash(eventId)+'.json'),JSON.stringify({
+  schema:'savage.facturforge.provision.v1',eventId,purchaseBinding,
+  checkoutSessionId,grantId:'b'.repeat(64),status:'provisioned_pending_buyer_receipt'
+ }),{mode:0o600});
+ await assert.rejects(inspectPrivateClaimLedger({ledgerDirectory:x.ledger,markerDirectory:x.markers}),/marker_without_session_claim/);
+});
+test('rejects unexpected JSON purchase filenames',async t=>{
+ const x=await setup(t);
+ await writeFile(join(x.ledger,'unbound.json'),'{}',{mode:0o600});
+ await assert.rejects(inspectPrivateClaimLedger({ledgerDirectory:x.ledger,markerDirectory:x.markers}),/unexpected_purchase_filename/);
+});
