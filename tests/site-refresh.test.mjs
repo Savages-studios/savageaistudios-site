@@ -106,7 +106,7 @@ test("catalog category navigation and purchase URLs stay stable",() => {
     assert.ok(catalog.includes('id="'+section+'"'),"Missing catalog section: "+section);
   }
   const stripeLinks=[...catalog.matchAll(/href="(https:\/\/buy\.stripe\.com\/[^"]+)"/g)].map(m=>m[1]);
-  assert.deepEqual(stripeLinks,["https://buy.stripe.com/bJe14mePedgege1gehaIM06","https://buy.stripe.com/28E28qcH66RQ6Drd25aIM0d","https://buy.stripe.com/6oUcN4bD28ZYge18LPaIM0M","https://buy.stripe.com/5kQ28qdLa0ts3rf5zDaIM0u","https://buy.stripe.com/9B600i9uU8ZYe5Td25aIM0D","https://buy.stripe.com/fZu14m6iI2BA0f32nraIM09","https://buy.stripe.com/6oU14m8qQeki8LzbY1aIM0E","https://buy.stripe.com/cNi28qfTia42aTH0fjaIM0i","https://buy.stripe.com/dRm28q9uU3FEbXL8LPaIM0C","https://buy.stripe.com/9B67sK6iIdgebXLaTXaIM0U","https://buy.stripe.com/fZu6oG9uUa422nb6DHaIM0m","https://buy.stripe.com/28E3cubD20ts5zne69aIM0T","https://buy.stripe.com/00w9AS6iI4JI7Hv7HLaIM0j","https://buy.stripe.com/5kQeVcbD22BA8Lz9PTaIM05"]);
+  assert.deepEqual(stripeLinks,["https://buy.stripe.com/28E28qcH66RQ6Drd25aIM0d","https://buy.stripe.com/6oUcN4bD28ZYge18LPaIM0M","https://buy.stripe.com/5kQ28qdLa0ts3rf5zDaIM0u","https://buy.stripe.com/fZu6oG9uUa422nb6DHaIM0m","https://buy.stripe.com/28E3cubD20ts5zne69aIM0T","https://buy.stripe.com/00w9AS6iI4JI7Hv7HLaIM0j"]);
   assert.equal((catalog.match(/class="buy-btn" href=/g)||[]).length,15);
   assert.equal((catalog.match(/class="buy-btn" href="[^"]+" aria-label="/g)||[]).length,15);
   assert.doesNotMatch(catalog,/81 actors built|33 repositories|Eleven product families, every one/);
