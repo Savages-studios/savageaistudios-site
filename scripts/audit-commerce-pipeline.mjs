@@ -61,6 +61,12 @@ function checkSale(row, filename, offers) {
   return { sale, offer };
 }
 
+export function assertUniqueCheckoutSession(seen, sale) {
+  const key = JSON.stringify([sale.accountId, sale.livemode, sale.checkoutSessionId]);
+  if (seen.has(key)) fail('duplicate_checkout_session_across_events');
+  seen.add(key);
+}
+
 function checkMarker(marker, row) {
   if (marker?.schema !== 'savage.facturforge.provision.v1'
       || marker.eventId !== row.eventId
@@ -110,6 +116,9 @@ export async function reconcileCommercialFulfillment(env = process.env) {
 
   const entries = [];
   const saleNames = new Set();
+  // A checkout session is one purchase, even if multiple distinct provider events
+  // were recorded. Replaying a second event must never create another grant.
+  const checkoutSessions = new Set();
   for (const name of (await readdir(ledger)).sort()) {
     if (!name.endsWith('.json')) continue; // ignore temporary publication files
     if (!hex.test(name.slice(0, -5))) fail('unexpected_sale_filename');
@@ -132,6 +141,7 @@ export async function reconcileCommercialFulfillment(env = process.env) {
         fail('sale_checkout_claim_conflict');
     }
     if (row.fulfillment.status === 'revoked') fail('revoked_sale_without_matching_claim');
+    assertUniqueCheckoutSession(checkoutSessions, sale);
     saleNames.add(name);
     let marker;
     try { marker = await readPrivateJson(join(markers, name)); }
