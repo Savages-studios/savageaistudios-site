@@ -1,0 +1,15 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { assessChargeRefundAggregate as assess } from '../scripts/refund-aggregate.mjs';
+const charge={id:'ch_abc',payment_intent:'pi_abc',livemode:false,currency:'usd',amount:10000,amount_refunded:10000};
+const r=(id,amount,status='succeeded')=>({id,amount,status,charge:'ch_abc',currency:'usd',livemode:false});
+const evidence={authenticatedByServer:true,allPagesRetrieved:true,chargeId:'ch_abc',paymentIntentId:'pi_abc',accountId:'acct_abc',livemode:false};
+test('two settled refunds qualify for manual review',()=>assert.equal(assess(charge,[r('re_a',4000),r('re_b',6000)],evidence).entitlementAction,'manual_full_refund_revocation_review'));
+test('settled partial plus pending balance does not qualify',()=>assert.equal(assess({...charge,amount_refunded:4000},[r('re_a',4000),r('re_b',6000,'pending')],evidence).entitlementAction,'no_automatic_revocation'));
+test('incomplete pagination cannot qualify',()=>assert.equal(assess(charge,[r('re_a',10000)],{...evidence,allPagesRetrieved:false}).entitlementAction,'no_automatic_revocation'));
+test('duplicate refund rejected',()=>assert.throws(()=>assess(charge,[r('re_a',5000),r('re_a',5000)],evidence)));
+test('charge total mismatch rejected',()=>assert.throws(()=>assess(charge,[r('re_a',9000)],evidence)));
+test('cross charge rejected',()=>assert.throws(()=>assess(charge,[{...r('re_a',10000),charge:'ch_other'}],evidence)));
+test('overflow rejected',()=>assert.throws(()=>assess(charge,[r('re_a',10000),r('re_b',1,'pending')],evidence)));
+test('failed refund not counted as settled',()=>assert.equal(assess({...charge,amount_refunded:0},[r('re_a',10000,'failed')],evidence).entitlementAction,'no_automatic_revocation'));
+test('mode mismatch rejected',()=>assert.throws(()=>assess(charge,[{...r('re_a',10000),livemode:true}],evidence)));
