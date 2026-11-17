@@ -1,0 +1,11 @@
+name: claim-gate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  claim-gate:
+    uses: Savages-studios/savage-standard/.github/workflows/claim-gate.yml@main
