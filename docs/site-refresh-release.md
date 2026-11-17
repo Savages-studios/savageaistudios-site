@@ -1,4 +1,9 @@
 # Savage AI Studios — Homepage Refresh Release Gate
+> **Claim state: unproven** — claim-gate labeling (evolution tranche 5, 2026-11-16).
+> The flagged figure is a pre-release checklist requirement — a browser zoom level the refresh must be checked at — not a measured result.
+> The same record lists its verification steps as outstanding before any merge or publication; GROUND_TRUTH.md governs the site's verified state.
+>
+
 **Date:** October 22, 2026 (America/Los_Angeles)  
 **Status:** Implementation committed on isolated feature branch. No Relume import or production deployment established.
 
