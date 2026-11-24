@@ -106,7 +106,7 @@ test("catalog category navigation and purchase URLs stay stable",() => {
     assert.ok(catalog.includes('id="'+section+'"'),"Missing catalog section: "+section);
   }
   const stripeLinks=[...catalog.matchAll(/href="(https:\/\/buy\.stripe\.com\/[^"]+)"/g)].map(m=>m[1]);
-  assert.deepEqual(stripeLinks,["https://buy.stripe.com/28E28qcH66RQ6Drd25aIM0d","https://buy.stripe.com/6oUcN4bD28ZYge18LPaIM0M","https://buy.stripe.com/5kQ28qdLa0ts3rf5zDaIM0u","https://buy.stripe.com/fZu6oG9uUa422nb6DHaIM0m","https://buy.stripe.com/28E3cubD20ts5zne69aIM0T","https://buy.stripe.com/00w9AS6iI4JI7Hv7HLaIM0j"]);
+  assert.deepEqual(stripeLinks,["https://buy.stripe.com/cNicN4gW8ewUav8ftS4Ni02","https://buy.stripe.com/7sYaEWdJW9cAeLogxW4Ni01","https://buy.stripe.com/bJeaEWcFSgF21YC0yY4Ni08","https://buy.stripe.com/4gM6oG0Xa3Sg7iW95u4Ni0d","https://buy.stripe.com/bJe14m49mgF29r481q4Ni06","https://buy.stripe.com/eVq28qbBO2OccDg2H64Ni07","https://buy.stripe.com/5kQaEW0XaewUav83La4Ni0a","https://buy.stripe.com/eVq14m35idsQ0UychG4Ni09","https://buy.stripe.com/8x214m6hudsQ1YC95u4Ni1j","https://buy.stripe.com/5kQdR8fS4ewUcDggxW4Ni1k"]);
   assert.equal((catalog.match(/class="buy-btn" href=/g)||[]).length,15);
   assert.equal((catalog.match(/class="buy-btn" href="[^"]+" aria-label="/g)||[]).length,15);
   assert.doesNotMatch(catalog,/81 actors built|33 repositories|Eleven product families, every one/);
