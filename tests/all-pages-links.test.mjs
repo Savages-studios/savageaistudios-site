@@ -73,7 +73,7 @@ test("every nested page includes a skip link and its main target",()=>{
 });
 
 test("busy catalogs have product-specific accessible purchase names",()=>{
-  for(const [path,count] of [["products/index.html",26],["coloring-books/index.html",5]]){
+  for(const [path,count] of [["products/index.html",26],["coloring-books/index.html",7]]){
     const html=readFileSync(resolve(root,path),"utf8");
     assert.equal((html.match(/class="buy-btn"/g)||[]).length,count);
     assert.equal((html.match(/class="buy-btn" href="[^"]+" aria-label="[^"]+"/g)||[]).length,count);
